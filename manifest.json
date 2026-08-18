@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.5d0tal1gat0r.agent-watcher",
+  "name": "Agent Watcher",
+  "version": "0.1.0",
+  "author": "5d0tal1gat0r",
+  "license": "MIT",
+  "description": "Every Claude Code, Codex, Gemini CLI and OpenCode session across your workspaces in one bar pill — it blinks when an agent finishes or waits for you.",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Agent Watcher",
+    "description": "AI agent sessions per workspace, with an attention blink",
+    "category": "AI",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "blinkOnDone": true,
+      "blinkOnWaiting": true
+    }
+  }
+}
