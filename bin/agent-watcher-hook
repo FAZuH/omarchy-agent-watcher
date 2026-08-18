@@ -65,19 +65,33 @@ ping_shell() {
 }
 
 dump() {
+  # No jq means we cannot tell a broken state file from a good one, so prune
+  # nothing: deleting every session here would lose live sessions for good.
+  command -v jq >/dev/null 2>&1 || { printf '[]\n'; return 0; }
   mkdir -p "$STATE_DIR" 2>/dev/null
-  local f agent pid any=0
+  local f agent pid out
+  local files=()
   for f in "$STATE_DIR"/*.json; do
     [ -e "$f" ] || continue
-    if ! agent=$(jq -er '.agent' "$f" 2>/dev/null); then rm -f "$f"; continue; fi
+    # Unreadable or already gone (a concurrent session-end): skip, never delete.
+    [ -r "$f" ] || continue
+    if ! agent=$(jq -er '.agent' "$f" 2>/dev/null); then
+      # Only delete when jq ran against a file that is still there: that is a
+      # real parse failure, not a race.
+      [ -e "$f" ] && rm -f "$f"
+      continue
+    fi
     pid=$(jq -r '.agentPid // 0' "$f" 2>/dev/null)
     if [ "${pid:-0}" -gt 0 ] 2>/dev/null && ! alive "$pid" "$agent"; then rm -f "$f"; continue; fi
-    any=1
+    files+=("$f")
   done
-  if [ "$any" = 1 ]; then
-    jq -s 'map(select(type == "object"))' "$STATE_DIR"/*.json 2>/dev/null || printf '[]'
+  if [ "${#files[@]}" -eq 0 ]; then printf '[]\n'; return 0; fi
+  # jq -s fails wholesale if one file vanished since the loop; fall back to
+  # reading them one by one rather than reporting "no sessions at all".
+  if out=$(jq -s 'map(select(type == "object"))' "${files[@]}" 2>/dev/null); then
+    printf '%s\n' "$out"
   else
-    printf '[]'
+    { for f in "${files[@]}"; do [ -r "$f" ] && jq -c . "$f" 2>/dev/null; done; } | jq -s 'map(select(type == "object"))'
   fi
 }
 

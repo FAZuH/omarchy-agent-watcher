@@ -173,6 +173,33 @@ assert_eq "$("$HOOK" dump)" "[]" "dump on a missing dir prints []"
 run_agent claude prompt '{"session_id":"live2","cwd":"/tmp/x"}' >/dev/null
 assert_eq "$("$HOOK" dump | jq 'length')" 0 "session whose agent process exited is pruned"
 
+echo "== hook: dump is non-destructive when jq or a file is unavailable"
+rm -rf "$AGENT_WATCHER_STATE_DIR"; mkdir -p "$AGENT_WATCHER_STATE_DIR"
+printf '{"agent":"codex","sessionId":"keep","state":"idle","cwd":"/k","agentPid":0,"windowAddress":"","updatedAt":1,"lastEvent":"session-start"}' > "$AGENT_WATCHER_STATE_DIR/codex-keep.json"
+# A PATH without jq (jq lives in /usr/bin next to everything else, so build a
+# dir holding only the other tools the hook calls).
+mkdir -p "$TMP/nojq"
+for t in bash tr grep awk cat mkdir rm mv date id sleep readlink dirname basename; do
+  tp=$(command -v "$t" 2>/dev/null) && ln -sf "$tp" "$TMP/nojq/$t"
+done
+out=$(PATH="$TMP/nojq" "$HOOK" dump); rc=$?
+assert_eq "$rc" 0 "dump without jq exits 0"
+assert_eq "$out" "[]" "dump without jq prints []"
+assert_file "$AGENT_WATCHER_STATE_DIR/codex-keep.json" "dump without jq prunes nothing"
+
+if [ "$(id -u)" != 0 ]; then
+  printf '{"agent":"codex","sessionId":"locked","state":"idle","cwd":"/l","agentPid":0,"windowAddress":"","updatedAt":1,"lastEvent":"session-start"}' > "$AGENT_WATCHER_STATE_DIR/codex-locked.json"
+  chmod 000 "$AGENT_WATCHER_STATE_DIR/codex-locked.json"
+  dump=$("$HOOK" dump); rc=$?
+  assert_eq "$rc" 0 "dump with an unreadable state file exits 0"
+  assert_eq "$(printf '%s' "$dump" | jq -r 'map(.sessionId) | join(",")')" keep "an unreadable file is skipped, the other sessions still print"
+  assert_file "$AGENT_WATCHER_STATE_DIR/codex-locked.json" "an unreadable file is skipped, not deleted"
+  chmod 644 "$AGENT_WATCHER_STATE_DIR/codex-locked.json"
+else
+  echo "  (skipped: running as root, chmod 000 stays readable)"
+fi
+rm -rf "$AGENT_WATCHER_STATE_DIR"
+
 echo "== setup: claude merge / idempotence / remove"
 export AGENT_WATCHER_CLAUDE_SETTINGS="$TMP/cfg/claude/settings.json"
 export AGENT_WATCHER_CODEX_HOOKS="$TMP/cfg/codex/hooks.json"

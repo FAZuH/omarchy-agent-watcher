@@ -74,17 +74,24 @@ function normalizeSession(raw) {
   }
 }
 
-// Output of `agent-watcher-hook dump` (a JSON array) -> sessions.
-function parseSnapshot(text) {
+// Output of `agent-watcher-hook dump` (a JSON array) -> { ok, sessions }.
+// ok is false when the dump did not even produce an array (script killed, jq
+// missing, truncated read): the caller should keep the sessions it has rather
+// than treat that as "every session ended".
+function parseSnapshotResult(text) {
   var parsed
-  try { parsed = JSON.parse(String(text || "")) } catch (e) { return [] }
-  if (!Array.isArray(parsed)) return []
+  try { parsed = JSON.parse(String(text || "")) } catch (e) { return { ok: false, sessions: [] } }
+  if (!Array.isArray(parsed)) return { ok: false, sessions: [] }
   var out = []
   for (var i = 0; i < parsed.length; i++) {
     var s = normalizeSession(parsed[i])
     if (s) out.push(s)
   }
-  return out
+  return { ok: true, sessions: out }
+}
+
+function parseSnapshot(text) {
+  return parseSnapshotResult(text).sessions
 }
 
 function projectName(cwd) {
@@ -339,6 +346,7 @@ if (typeof module !== "undefined") {
     normalizeAddress: normalizeAddress,
     sessionKey: sessionKey,
     normalizeSession: normalizeSession,
+    parseSnapshotResult: parseSnapshotResult,
     parseSnapshot: parseSnapshot,
     projectName: projectName,
     cleanTitle: cleanTitle,

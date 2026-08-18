@@ -71,6 +71,16 @@ test("parseSnapshot: tolerant of bad JSON, non-arrays and junk entries", () => {
   assert.equal(list[1].windowAddress, "ff")
 })
 
+test("parseSnapshotResult: ok tells a failed dump apart from an empty one", () => {
+  assert.deepEqual(Model.parseSnapshotResult("[]"), { ok: true, sessions: [] })
+  assert.deepEqual(Model.parseSnapshotResult(""), { ok: false, sessions: [] })
+  assert.deepEqual(Model.parseSnapshotResult("junk"), { ok: false, sessions: [] })
+  assert.deepEqual(Model.parseSnapshotResult("{}"), { ok: false, sessions: [] })
+  const res = Model.parseSnapshotResult(JSON.stringify([{ agent: "claude", sessionId: "a", state: "working" }]))
+  assert.equal(res.ok, true)
+  assert.deepEqual(res.sessions.map(s => s.key), ["claude-a"])
+})
+
 test("projectName: basename of cwd with sane fallbacks", () => {
   assert.equal(Model.projectName("/home/u/Proyects/omarchy-agent-watcher"), "omarchy-agent-watcher")
   assert.equal(Model.projectName("/home/u/proj/"), "proj")

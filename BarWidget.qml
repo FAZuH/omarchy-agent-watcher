@@ -58,8 +58,13 @@ BarWidget {
   }
 
   function applySnapshot(text) {
+    // A dump that is not a JSON array means the dump failed, not that every
+    // session ended: keeping the old map avoids resurrecting acknowledged
+    // "done" sessions as unseen (blinking) on the next successful dump.
+    var res = Model.parseSnapshotResult(text)
+    if (!res.ok) return
     var now = Math.floor(Date.now() / 1000)
-    sessions = Model.mergeSessions(sessions, Model.parseSnapshot(text), activeAddress(), now)
+    sessions = Model.mergeSessions(sessions, res.sessions, activeAddress(), now)
   }
 
   function acknowledgeFocused() {
