@@ -190,7 +190,8 @@ opencode 1.2.27 (events `session.created`, `session.status`,
 - Groups: **Workspace N** sorted by id, focused workspace tagged "current".
   Sessions whose `windowAddress` is empty or not present in
   `Hyprland.toplevels` go into **Other** at the end.
-- Row: agent icon (per-agent SVG in `assets/`), project = basename of `cwd`,
+- Row: agent tag chip (`claude` / `codex` / `gemini` / `opencode` — plain
+  text, theme-colored; no brand SVGs shipped), project = basename of `cwd`,
   state badge (colored dot + label), time in current state ("4m"), subtitle =
   live window title from the toplevel with leading spinner glyphs
   (`◐◓◑◒✳✶✻✽` etc.) stripped — for Claude Code this is the task summary.
@@ -251,7 +252,8 @@ bash; deps `jq`, `hyprctl`, `omarchy-shell` (all present on Omarchy).
 
 ## 8. Error handling
 
-- Malformed / partial state file → skipped, retried next refresh.
+- Malformed state file → ignored by the shell and deleted by the next
+  `dump` (writes are atomic `mv`, so this only happens on external damage).
 - Missing runtime dir → zero sessions; the hook script creates it.
 - Prune (every 15 s and on every refresh) deletes files whose `agentPid` is
   dead so nothing leaks when `SessionEnd` never fires (terminal killed).
@@ -265,8 +267,7 @@ bash; deps `jq`, `hyprctl`, `omarchy-shell` (all present on Omarchy).
 
 Unit — `node --test test/model.test.js` (Model.js pure JS):
 
-- event normalization per agent (each row of the §3 table → normalized event,
-  session id, cwd extraction);
+- state-file parsing (tolerant of junk), address normalization;
 - state transitions incl. done-while-focused → seen/idle, acknowledge-on-focus
   (`seen`), `tool-done` only acting on `waiting`, seen-waiting keeps its badge,
   new event resets `seen`, removal on end/prune;
@@ -275,7 +276,8 @@ Unit — `node --test test/model.test.js` (Model.js pure JS):
 - title glyph stripping, elapsed-time formatting, address normalization.
 
 Script — `test/hook.test.sh` (plain bash, stubbed `hyprctl` / `omarchy-shell`
-on `PATH`, temp `HOME` / `XDG_RUNTIME_DIR`): state file contents per event,
+on `PATH`, temp `HOME` / state dir): per-agent event → state mapping (each row
+of the §3 table), session id / cwd extraction, state file contents per event,
 atomic write, `session-end` deletion, `tool-done` no-op unless waiting,
 `hyprctl` stub called once per session, silence on stdout, exit 0 on garbage
 input; setup install / status / remove round-trips on temp config files,
@@ -305,7 +307,6 @@ omarchy-agent-watcher/
   bin/agent-watcher-hook
   bin/agent-watcher-setup
   hooks/opencode-agent-watcher.js
-  assets/{claude,codex,gemini,opencode}.svg
   test/model.test.js
   test/hook.test.sh
   README.md  LICENSE  preview.png
