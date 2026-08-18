@@ -251,6 +251,38 @@ assert_eq "$(PATH="$TMP/emptybin:/usr/bin:/bin" "$SETUP" status gemini)" "gemini
 "$SETUP" frobnicate claude >/dev/null 2>&1; rc=$?
 assert_eq "$rc" 2 "usage error exits 2"
 
+echo "== opencode plugin: event order survives concurrent events"
+# OpenCode emits a redundant "busy" status in the same millisecond as
+# session.idle. Each send is a separate process, so without serialisation the
+# slower "prompt" lands after "done" and the session sticks at working.
+if command -v node >/dev/null 2>&1; then
+  OCDIR="$TMP/oc"; mkdir -p "$OCDIR"
+  OCLOG="$OCDIR/events.log"
+  cat > "$OCDIR/fake-hook" <<EOF
+#!/usr/bin/env bash
+cat >/dev/null
+case "\$2" in prompt) sleep 0.4 ;; done) sleep 0.05 ;; esac
+echo "\$2" >> "$OCLOG"
+EOF
+  chmod +x "$OCDIR/fake-hook"
+  sed "s|__HOOK_PATH__|$OCDIR/fake-hook|g" "$ROOT/hooks/opencode-agent-watcher.js" > "$OCDIR/plugin.mjs"
+  node --input-type=module -e "
+    const { AgentWatcher } = await import('$OCDIR/plugin.mjs')
+    const h = await AgentWatcher({ directory: '/tmp/proj' })
+    const fire = (type, properties) => h.event({ event: { type, properties } })
+    await fire('session.created', { info: { id: 's1', directory: '/tmp/proj' } })
+    await fire('session.status', { sessionID: 's1', status: { type: 'busy' } })
+    await fire('session.status', { sessionID: 's1', status: { type: 'busy' } })
+    await fire('session.idle', { sessionID: 's1' })
+    await new Promise((r) => setTimeout(r, 3000))
+  " 2>/dev/null
+  assert_eq "$(tail -1 "$OCLOG" 2>/dev/null)" done "the last hook to run is the last event OpenCode reported"
+  assert_eq "$(grep -c '^prompt$' "$OCLOG" 2>/dev/null)" 1 "a repeated busy status does not re-send prompt"
+  assert_eq "$(tr '\n' ' ' < "$OCLOG" 2>/dev/null)" "session-start prompt done " "events run in the order OpenCode emitted them"
+else
+  echo "  (skipped: node not on PATH)"
+fi
+
 echo
 echo "hook tests: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
