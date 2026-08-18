@@ -130,12 +130,13 @@ dump() {
     fi
     pid=$(jq -r '.agentPid // 0' "$f" 2>/dev/null)
     if [ "${pid:-0}" -gt 0 ] 2>/dev/null && ! alive "$pid" "$agent"; then rm -f "$f"; continue; fi
-    # Alive but orphaned, and the window it was started in is gone: the user
-    # closed the terminal and the agent survived the hangup. Not a session
-    # anyone can reach any more; drop it. (A tmux/nohup session that never
-    # had a window keeps its empty address and is left alone.)
+    # The window it was started in is gone and no live process vouches for
+    # it — either we never learned the pid, or the agent survived the hangup
+    # and now hangs off init/systemd (OpenCode does that): the user closed the
+    # terminal. Not a session anyone can reach any more; drop it. A tmux/nohup
+    # session that never had a window keeps its empty address and is left alone.
     win=$(jq -r '.windowAddress // ""' "$f" 2>/dev/null)
-    if [ "${pid:-0}" -gt 0 ] 2>/dev/null && [ -n "$win" ] && orphaned "$pid" && ! window_exists "$win"; then
+    if [ -n "$win" ] && { [ "${pid:-0}" -le 0 ] 2>/dev/null || orphaned "$pid"; } && ! window_exists "$win"; then
       rm -f "$f"; continue
     fi
     files+=("$f")
