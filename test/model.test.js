@@ -224,3 +224,49 @@ test("summaryLine: human header line", () => {
   const s = Model.barSummary([{ state: "working", seen: true }, { state: "waiting", seen: false }, { state: "done", seen: false }], {})
   assert.equal(Model.summaryLine(s), "3 sessions · 1 working · 1 waiting · 1 done")
 })
+
+// ---- Task 4: sorting, grouping, hook status
+
+test("sortSessions: attention first, then waiting/done/working/idle, then newest", () => {
+  const list = [
+    { key: "a", state: "idle", seen: true, stateSince: 50 },
+    { key: "b", state: "working", seen: true, stateSince: 10 },
+    { key: "c", state: "done", seen: false, stateSince: 20 },
+    { key: "d", state: "waiting", seen: false, stateSince: 5 },
+    { key: "e", state: "done", seen: true, stateSince: 90 },   // displays as idle
+    { key: "f", state: "working", seen: true, stateSince: 40 },
+    { key: "g", state: "waiting", seen: true, stateSince: 1 }   // seen waiting: no attention, still ranks as waiting
+  ]
+  assert.deepEqual(Model.sortSessions(list, {}).map(s => s.key), ["d", "c", "g", "f", "b", "e", "a"])
+  assert.deepEqual(Model.sortSessions(list, { blinkOnDone: false }).map(s => s.key), ["d", "g", "c", "f", "b", "e", "a"])
+  assert.equal(list[0].key, "a", "input is not mutated")
+})
+
+test("groupByWorkspace: groups by the live window's workspace, Other last, current flagged, sorted inside", () => {
+  const list = [
+    { key: "a", state: "idle", seen: true, stateSince: 1, windowAddress: "w1" },
+    { key: "b", state: "done", seen: false, stateSince: 2, windowAddress: "w1" },
+    { key: "c", state: "working", seen: true, stateSince: 3, windowAddress: "w2" },
+    { key: "d", state: "working", seen: true, stateSince: 4, windowAddress: "" },
+    { key: "e", state: "idle", seen: true, stateSince: 5, windowAddress: "gone" }
+  ]
+  const lookup = { w1: { workspaceId: 5, title: "x" }, w2: { workspaceId: 2, title: "y" } }
+  const groups = Model.groupByWorkspace(list, lookup, 5, {})
+  assert.deepEqual(groups.map(g => [g.id, g.label, g.current, g.sessions.map(s => s.key)]), [
+    [2, "Workspace 2", false, ["c"]],
+    [5, "Workspace 5", true, ["b", "a"]],
+    [Model.OTHER_GROUP_ID, "Other", false, ["d", "e"]]
+  ])
+  assert.deepEqual(Model.groupByWorkspace([], lookup, 1, {}), [])
+  assert.equal(Model.groupByWorkspace(list.slice(0, 1), null, 1, {})[0].label, "Other")
+})
+
+test("parseHookStatus / hookStatusLabel", () => {
+  assert.deepEqual(Model.parseHookStatus("claude installed\ncodex agent-missing\ngemini not-installed\nbogus line\nopencode weird\n"),
+    { claude: "installed", codex: "agent-missing", gemini: "not-installed" })
+  assert.deepEqual(Model.parseHookStatus(""), {})
+  assert.equal(Model.hookStatusLabel("installed"), "hooks installed")
+  assert.equal(Model.hookStatusLabel("not-installed"), "not installed")
+  assert.equal(Model.hookStatusLabel("agent-missing"), "not found")
+  assert.equal(Model.hookStatusLabel(undefined), "checking…")
+})

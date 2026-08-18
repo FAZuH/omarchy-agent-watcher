@@ -260,6 +260,73 @@ function summaryLine(summary) {
   return bits.join(" · ")
 }
 
+function compareSessions(a, b, settings) {
+  var aa = needsAttention(a, settings) ? 0 : 1
+  var ab = needsAttention(b, settings) ? 0 : 1
+  if (aa !== ab) return aa - ab
+  var ra = STATE_RANK[displayState(a)], rb = STATE_RANK[displayState(b)]
+  if (ra !== rb) return ra - rb
+  if (a.stateSince !== b.stateSince) return b.stateSince - a.stateSince // newest first
+  return a.key < b.key ? -1 : (a.key > b.key ? 1 : 0)
+}
+
+function sortSessions(list, settings) {
+  var copy = list.slice()
+  copy.sort(function(a, b) { return compareSessions(a, b, settings) })
+  return copy
+}
+
+// `lookup` maps a bare window address to { workspaceId, title } (built by
+// Panel.qml from Hyprland.toplevels). Sessions without a live window go to
+// "Other".
+function groupByWorkspace(list, lookup, focusedWorkspaceId, settings) {
+  var table = lookup || {}
+  var groups = {}
+  var other = []
+  for (var i = 0; i < list.length; i++) {
+    var s = list[i]
+    var win = s.windowAddress !== "" ? table[s.windowAddress] : null
+    var wsId = win && typeof win.workspaceId === "number" && win.workspaceId > 0 ? win.workspaceId : null
+    if (wsId === null) { other.push(s); continue }
+    if (!groups[wsId]) groups[wsId] = []
+    groups[wsId].push(s)
+  }
+  var ids = []
+  for (var id in groups) ids.push(parseInt(id, 10))
+  ids.sort(function(a, b) { return a - b })
+  var out = []
+  for (var j = 0; j < ids.length; j++) {
+    out.push({
+      id: ids[j],
+      label: "Workspace " + ids[j],
+      current: ids[j] === focusedWorkspaceId,
+      sessions: sortSessions(groups[ids[j]], settings)
+    })
+  }
+  if (other.length) out.push({ id: OTHER_GROUP_ID, label: "Other", current: false, sessions: sortSessions(other, settings) })
+  return out
+}
+
+// Output of `agent-watcher-setup status all`: one "<agent> <status>" per line.
+var HOOK_STATUSES = ["installed", "not-installed", "agent-missing"]
+
+function parseHookStatus(text) {
+  var out = {}
+  var lines = String(text || "").split("\n")
+  for (var i = 0; i < lines.length; i++) {
+    var m = lines[i].match(/^\s*([a-z]+)\s+([a-z-]+)\s*$/)
+    if (m && HOOK_STATUSES.indexOf(m[2]) !== -1) out[m[1]] = m[2]
+  }
+  return out
+}
+
+function hookStatusLabel(status) {
+  if (status === "installed") return "hooks installed"
+  if (status === "not-installed") return "not installed"
+  if (status === "agent-missing") return "not found"
+  return "checking…"
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     AGENTS: AGENTS,
@@ -288,6 +355,11 @@ if (typeof module !== "undefined") {
     barParts: barParts,
     barLabel: barLabel,
     verticalLabel: verticalLabel,
-    summaryLine: summaryLine
+    summaryLine: summaryLine,
+    sortSessions: sortSessions,
+    groupByWorkspace: groupByWorkspace,
+    HOOK_STATUSES: HOOK_STATUSES,
+    parseHookStatus: parseHookStatus,
+    hookStatusLabel: hookStatusLabel
   }
 }
