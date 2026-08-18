@@ -11,11 +11,17 @@ export HOME="$TMP/home"
 mkdir -p "$HOME" "$TMP/bin" "$TMP/emptybin"
 
 # Stubs on PATH: hyprctl reports one window owned by THIS test process (an
-# ancestor of every hook run below); omarchy-shell just logs.
+# ancestor of every hook run below); omarchy-shell just logs. Setting
+# HYPRCTL_STUB_EMPTY=1 makes hyprctl report no windows at all, so tests can
+# exercise the unresolved-window path.
 cat > "$TMP/bin/hyprctl" <<EOF
 #!/usr/bin/env bash
 echo "\$*" >> "$TMP/hyprctl.log"
-echo '[{"pid": $$, "address": "0xABC123"}]'
+if [ "\${HYPRCTL_STUB_EMPTY:-0}" = 1 ]; then
+  echo '[]'
+else
+  echo '[{"pid": $$, "address": "0xABC123"}]'
+fi
 EOF
 cat > "$TMP/bin/omarchy-shell" <<EOF
 #!/usr/bin/env bash
@@ -23,9 +29,12 @@ echo "\$*" >> "$TMP/shell.log"
 EOF
 # Fake agents: a process whose cmdline matches the agent pattern, running the
 # hook as a child (so the PPID walk finds them, like a real claude/codex...).
+# Each wrapper records its own PID before invoking the hook, so tests can
+# assert the hook resolved *that* ancestor (not itself, not some other pid).
 for a in claude codex gemini opencode; do
   cat > "$TMP/bin/$a" <<EOF
 #!/usr/bin/env bash
+echo \$\$ > "$TMP/agent.pid"
 "$ROOT/bin/agent-watcher-hook" $a "\$@"
 EOF
 done
@@ -50,7 +59,9 @@ run_agent() { # run_agent <agent> <event> <json>  -> stdout of the hook
 
 echo "== hook: session lifecycle"
 reset_logs
+rm -f "$TMP/agent.pid"
 out=$(run_agent claude session-start '{"session_id":"s1","cwd":"/tmp/proj","hook_event_name":"SessionStart"}'); rc=$?
+WRAPPER_PID=$(cat "$TMP/agent.pid" 2>/dev/null)
 F="$AGENT_WATCHER_STATE_DIR/claude-s1.json"
 assert_eq "$rc" 0 "exit code is 0"
 assert_eq "$out" "" "nothing on stdout"
@@ -61,7 +72,8 @@ assert_eq "$(field "$F" .state)" idle "session-start -> idle"
 assert_eq "$(field "$F" .cwd)" /tmp/proj "cwd"
 assert_eq "$(field "$F" .lastEvent)" session-start "lastEvent"
 assert_eq "$(field "$F" .windowAddress)" abc123 "window resolved from hyprctl, 0x stripped, lower-cased"
-[ "$(field "$F" .agentPid)" -gt 0 ] && ok || ko "agentPid resolved from the fake claude ancestor"
+[ -n "$WRAPPER_PID" ] && ok || ko "fake claude wrapper pid was not recorded"
+assert_eq "$(field "$F" .agentPid)" "$WRAPPER_PID" "agentPid resolved from the fake claude ancestor, not the hook's own pid"
 [ "$(field "$F" .updatedAt)" -gt 1700000000 ] && ok || ko "updatedAt is epoch seconds"
 assert_eq "$(shell_pings)" 1 "one shell ping"
 assert_eq "$(hyprctl_calls)" 1 "one hyprctl call"
@@ -108,6 +120,19 @@ out=$("$HOOK" aider prompt </dev/null); rc=$?
 assert_eq "$rc" 0 "unknown agent exits 0"
 out=$("$HOOK" </dev/null); rc=$?
 assert_eq "$rc" 0 "no args exits 0"
+
+echo "== hook: unresolved window (hyprctl reports no windows)"
+reset_logs
+export HYPRCTL_STUB_EMPTY=1
+FNW="$AGENT_WATCHER_STATE_DIR/claude-nowin.json"
+run_agent claude session-start '{"session_id":"nowin","cwd":"/tmp/nowin"}' >/dev/null
+assert_eq "$(field "$FNW" .windowAddress)" "" "windowAddress empty when hyprctl resolves no window"
+run_agent claude prompt '{"session_id":"nowin"}' >/dev/null
+assert_eq "$(field "$FNW" .windowAddress)" "" "windowAddress stays empty across a second event (never wrongly cached)"
+assert_eq "$(field "$FNW" .cwd)" /tmp/nowin "cwd survives a payload without cwd, even with an unresolved window"
+run_agent claude done '{"session_id":"nowin","cwd":"/tmp/nowin"}' >/dev/null
+assert_eq "$(field "$FNW" .state)" done "a later event still updates state when the window stays unresolved"
+unset HYPRCTL_STUB_EMPTY
 
 echo "== hook: dump and prune"
 reset_logs

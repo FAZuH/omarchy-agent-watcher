@@ -130,8 +130,8 @@ fi
 
 PREV_STATE=""; PREV_WINDOW=""; PREV_PID=0; PREV_CWD=""
 if [ -f "$FILE" ]; then
-  IFS=$'\t' read -r PREV_STATE PREV_WINDOW PREV_PID PREV_CWD < <(
-    jq -r '[(.state // ""), (.windowAddress // ""), ((.agentPid // 0) | tostring), (.cwd // "")] | @tsv' "$FILE" 2>/dev/null)
+  { read -r PREV_STATE; read -r PREV_WINDOW; read -r PREV_PID; read -r PREV_CWD; } < <(
+    jq -r '(.state // ""), (.windowAddress // ""), ((.agentPid // 0)|tostring), (.cwd // "")' "$FILE" 2>/dev/null)
 fi
 # tool-done only matters while blocked on a permission.
 if [ "$EVENT" = tool-done ] && [ "$PREV_STATE" != waiting ]; then exit 0; fi
@@ -144,6 +144,7 @@ else
   resolve_ancestry "$AGENT" 1
 fi
 [ "$AGENT_PID" != 0 ] || AGENT_PID="${PREV_PID:-0}"
+case $AGENT_PID in ''|*[!0-9]*) AGENT_PID=0 ;; esac
 [ -n "$CWD" ] || CWD="$PREV_CWD"
 
 mkdir -p "$STATE_DIR" 2>/dev/null || exit 0
