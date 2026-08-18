@@ -430,7 +430,12 @@ Panel {
             Text {
               anchors.left: hookName.right
               anchors.leftMargin: Style.space(10)
+              // Stop short of the chip: the Codex note is long enough to run
+              // underneath it otherwise.
+              anchors.right: actionChip.left
+              anchors.rightMargin: Style.space(10)
               anchors.verticalCenter: parent.verticalCenter
+              elide: Text.ElideRight
               text: (hookRow.busy ? "working…" : Model.hookStatusLabel(hookRow.status))
                 + (hookRow.installed && hookRow.modelData.id === "codex" ? "  (run /hooks in Codex once to trust)" : "")
               color: hookRow.installed ? root.doneColor : root.mutedForeground
