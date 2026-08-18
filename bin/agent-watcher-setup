@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+# Agent Watcher hook installer.
+#
+#   agent-watcher-setup status  <agent|all>   -> "<agent> installed|not-installed|agent-missing"
+#   agent-watcher-setup install <agent>
+#   agent-watcher-setup remove  <agent>
+#
+#   agent: claude | codex | gemini | opencode
+#
+# Only entries whose command contains "agent-watcher-hook" are ever added or
+# removed; everything else in the agent's config is left alone. A backup
+# <file>.agent-watcher.bak is written before each modification.
+set -u
+
+HERE=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
+HOOK="$HERE/agent-watcher-hook"
+TEMPLATE="$(dirname "$HERE")/hooks/opencode-agent-watcher.js"
+MARK="agent-watcher-hook"
+
+CLAUDE_SETTINGS="${AGENT_WATCHER_CLAUDE_SETTINGS:-$HOME/.claude/settings.json}"
+CODEX_HOOKS="${AGENT_WATCHER_CODEX_HOOKS:-$HOME/.codex/hooks.json}"
+GEMINI_SETTINGS="${AGENT_WATCHER_GEMINI_SETTINGS:-$HOME/.gemini/settings.json}"
+OPENCODE_PLUGIN="${AGENT_WATCHER_OPENCODE_PLUGIN:-$HOME/.config/opencode/plugins/agent-watcher.js}"
+
+die() { echo "error: $*" >&2; exit 1; }
+usage() { echo "usage: agent-watcher-setup status <agent|all> | install <agent> | remove <agent>" >&2; exit 2; }
+
+config_file() {
+  case "$1" in
+    claude) printf '%s' "$CLAUDE_SETTINGS" ;;
+    codex) printf '%s' "$CODEX_HOOKS" ;;
+    gemini) printf '%s' "$GEMINI_SETTINGS" ;;
+    opencode) printf '%s' "$OPENCODE_PLUGIN" ;;
+    *) return 1 ;;
+  esac
+}
+
+# Our hook groups per agent, as { EventName: [ {matcher?, hooks:[...]} ] }.
+# Claude Code / Codex timeouts are seconds, Gemini's are milliseconds.
+hook_groups() {
+  case "$1" in
+    claude) jq -n --arg h "$HOOK" '{
+      SessionStart:      [{hooks: [{type: "command", command: ($h + " claude session-start"), timeout: 5}]}],
+      UserPromptSubmit:  [{hooks: [{type: "command", command: ($h + " claude prompt"), timeout: 5}]}],
+      PermissionRequest: [{hooks: [{type: "command", command: ($h + " claude waiting"), timeout: 5}]}],
+      Notification:      [{matcher: "permission_prompt", hooks: [{type: "command", command: ($h + " claude waiting"), timeout: 5}]}],
+      PostToolUse:       [{hooks: [{type: "command", command: ($h + " claude tool-done"), timeout: 5}]}],
+      Stop:              [{hooks: [{type: "command", command: ($h + " claude done"), timeout: 5}]}],
+      SessionEnd:        [{hooks: [{type: "command", command: ($h + " claude session-end"), timeout: 5}]}]
+    }' ;;
+    codex) jq -n --arg h "$HOOK" '{
+      SessionStart:      [{hooks: [{type: "command", command: ($h + " codex session-start"), timeout: 5}]}],
+      UserPromptSubmit:  [{hooks: [{type: "command", command: ($h + " codex prompt"), timeout: 5}]}],
+      PermissionRequest: [{hooks: [{type: "command", command: ($h + " codex waiting"), timeout: 5}]}],
+      PostToolUse:       [{hooks: [{type: "command", command: ($h + " codex tool-done"), timeout: 5}]}],
+      Stop:              [{hooks: [{type: "command", command: ($h + " codex done"), timeout: 5}]}],
+      SessionEnd:        [{hooks: [{type: "command", command: ($h + " codex session-end"), timeout: 5}]}]
+    }' ;;
+    gemini) jq -n --arg h "$HOOK" '{
+      SessionStart: [{hooks: [{name: "agent-watcher", type: "command", command: ($h + " gemini session-start"), timeout: 5000}]}],
+      BeforeAgent:  [{hooks: [{name: "agent-watcher", type: "command", command: ($h + " gemini prompt"), timeout: 5000}]}],
+      Notification: [{hooks: [{name: "agent-watcher", type: "command", command: ($h + " gemini waiting"), timeout: 5000}]}],
+      AfterTool:    [{hooks: [{name: "agent-watcher", type: "command", command: ($h + " gemini tool-done"), timeout: 5000}]}],
+      AfterAgent:   [{hooks: [{name: "agent-watcher", type: "command", command: ($h + " gemini done"), timeout: 5000}]}],
+      SessionEnd:   [{hooks: [{name: "agent-watcher", type: "command", command: ($h + " gemini session-end"), timeout: 5000}]}]
+    }' ;;
+  esac
+}
+
+# jq: drop our hooks from every group, then drop empty groups and empty events.
+JQ_STRIP='
+  def strip_ours($mark):
+    (.hooks // {})
+    | with_entries(.value |= (map(.hooks |= map(select(((.command // "") | contains($mark)) | not))) | map(select((.hooks | length) > 0))))
+    | with_entries(select((.value | length) > 0));
+'
+
+valid_json_object() { [ -f "$1" ] && jq -e 'type == "object"' "$1" >/dev/null 2>&1; }
+
+backup() { [ -f "$1" ] && cp -f "$1" "$1.agent-watcher.bak"; }
+
+merge_hooks() { # merge_hooks <file> <groupsJson>
+  local file="$1" ours="$2" tmp="$1.tmp.$$"
+  if [ -f "$file" ]; then
+    valid_json_object "$file" || die "$file is not valid JSON"
+    backup "$file"
+  else
+    mkdir -p "$(dirname "$file")" || die "cannot create $(dirname "$file")"
+    printf '{}\n' > "$file"
+  fi
+  jq --arg mark "$MARK" --argjson ours "$ours" "$JQ_STRIP"'
+    .hooks = (strip_ours($mark) as $clean
+      | reduce ($ours | to_entries[]) as $e ($clean; .[$e.key] = ((.[$e.key] // []) + $e.value)))
+  ' "$file" > "$tmp" && mv -f "$tmp" "$file"
+  local rc=$?
+  rm -f "$tmp"
+  return $rc
+}
+
+remove_hooks() { # remove_hooks <file>
+  local file="$1" tmp="$1.tmp.$$"
+  [ -f "$file" ] || return 0
+  valid_json_object "$file" || die "$file is not valid JSON"
+  backup "$file"
+  jq --arg mark "$MARK" "$JQ_STRIP"'
+    if has("hooks") then .hooks = strip_ours($mark) else . end
+    | if (.hooks | type) == "object" and (.hooks | length) == 0 then del(.hooks) else . end
+  ' "$file" > "$tmp" && mv -f "$tmp" "$file"
+  local rc=$?
+  rm -f "$tmp"
+  return $rc
+}
+
+has_hooks() { # has_hooks <file>
+  [ -f "$1" ] && jq -e --arg mark "$MARK" '[(.hooks // {})[][]?.hooks[]?.command // ""] | any(contains($mark))' "$1" >/dev/null 2>&1
+}
+
+agent_present() { # binary on PATH or its config dir exists
+  local file
+  file=$(config_file "$1") || return 1
+  case "$1" in
+    opencode) command -v opencode >/dev/null 2>&1 || [ -d "$(dirname "$(dirname "$file")")" ] ;;
+    *) command -v "$1" >/dev/null 2>&1 || [ -d "$(dirname "$file")" ] ;;
+  esac
+}
+
+status_of() {
+  local agent="$1" installed=1
+  case "$agent" in
+    claude|codex|gemini) has_hooks "$(config_file "$agent")" && installed=0 ;;
+    opencode) [ -f "$OPENCODE_PLUGIN" ] && grep -q "$MARK" "$OPENCODE_PLUGIN" 2>/dev/null && installed=0 ;;
+    *) return 1 ;;
+  esac
+  if [ "$installed" = 0 ]; then printf 'installed'
+  elif agent_present "$agent"; then printf 'not-installed'
+  else printf 'agent-missing'
+  fi
+}
+
+install_agent() {
+  case "$1" in
+    claude|codex|gemini) merge_hooks "$(config_file "$1")" "$(hook_groups "$1")" || die "could not update $(config_file "$1")" ;;
+    opencode)
+      [ -f "$TEMPLATE" ] || die "missing template $TEMPLATE"
+      mkdir -p "$(dirname "$OPENCODE_PLUGIN")" || die "cannot create $(dirname "$OPENCODE_PLUGIN")"
+      sed "s|__HOOK_PATH__|$HOOK|g" "$TEMPLATE" > "$OPENCODE_PLUGIN" || die "could not write $OPENCODE_PLUGIN" ;;
+    *) usage ;;
+  esac
+  [ "$1" = codex ] && echo "note: run /hooks inside Codex once to trust the new hooks"
+  return 0
+}
+
+remove_agent() {
+  case "$1" in
+    claude|codex|gemini) remove_hooks "$(config_file "$1")" || die "could not update $(config_file "$1")" ;;
+    opencode) rm -f "$OPENCODE_PLUGIN" ;;
+    *) usage ;;
+  esac
+}
+
+cmd="${1:-}"
+agent="${2:-}"
+case "$cmd" in
+  status)
+    if [ -z "$agent" ] || [ "$agent" = all ]; then
+      for a in claude codex gemini opencode; do echo "$a $(status_of "$a")"; done
+    else
+      s=$(status_of "$agent") || usage
+      echo "$agent $s"
+    fi ;;
+  install) [ -n "$agent" ] || usage; install_agent "$agent" ;;
+  remove) [ -n "$agent" ] || usage; remove_agent "$agent" ;;
+  *) usage ;;
+esac

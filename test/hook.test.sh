@@ -159,6 +159,84 @@ assert_eq "$("$HOOK" dump)" "[]" "dump on a missing dir prints []"
 run_agent claude prompt '{"session_id":"live2","cwd":"/tmp/x"}' >/dev/null
 assert_eq "$("$HOOK" dump | jq 'length')" 0 "session whose agent process exited is pruned"
 
+echo "== setup: claude merge / idempotence / remove"
+export AGENT_WATCHER_CLAUDE_SETTINGS="$TMP/cfg/claude/settings.json"
+export AGENT_WATCHER_CODEX_HOOKS="$TMP/cfg/codex/hooks.json"
+export AGENT_WATCHER_GEMINI_SETTINGS="$TMP/cfg/gemini/settings.json"
+export AGENT_WATCHER_OPENCODE_PLUGIN="$TMP/cfg/opencode/plugins/agent-watcher.js"
+mkdir -p "$TMP/cfg/claude" "$TMP/cfg/codex" "$TMP/cfg/gemini" "$TMP/cfg/opencode"
+cat > "$AGENT_WATCHER_CLAUDE_SETTINGS" <<'EOF'
+{
+  "model": "opus",
+  "hooks": {
+    "Stop": [ { "matcher": "", "hooks": [ { "type": "command", "command": "notify-send done" } ] } ]
+  }
+}
+EOF
+assert_eq "$("$SETUP" status claude)" "claude not-installed" "status before install"
+"$SETUP" install claude; rc=$?
+assert_eq "$rc" 0 "install claude exits 0"
+assert_file "$AGENT_WATCHER_CLAUDE_SETTINGS.agent-watcher.bak" "backup written"
+assert_eq "$(jq -r '.model' "$AGENT_WATCHER_CLAUDE_SETTINGS")" opus "unrelated keys preserved"
+assert_eq "$(jq -r '[.hooks.Stop[].hooks[].command] | map(select(. == "notify-send done")) | length' "$AGENT_WATCHER_CLAUDE_SETTINGS")" 1 "foreign Stop hook preserved"
+assert_eq "$(jq -r '[.hooks.Stop[].hooks[].command] | map(select(contains("agent-watcher-hook claude done"))) | length' "$AGENT_WATCHER_CLAUDE_SETTINGS")" 1 "our Stop hook added"
+for ev in SessionStart UserPromptSubmit PermissionRequest Notification PostToolUse Stop SessionEnd; do
+  n=$(jq -r --arg ev "$ev" '[.hooks[$ev][]?.hooks[]?.command // "" | select(contains("agent-watcher-hook"))] | length' "$AGENT_WATCHER_CLAUDE_SETTINGS")
+  assert_eq "$n" 1 "claude $ev has exactly one of our hooks"
+done
+assert_eq "$(jq -r '.hooks.Notification[0].matcher' "$AGENT_WATCHER_CLAUDE_SETTINGS")" permission_prompt "Notification matcher"
+assert_eq "$(jq -r '.hooks.Stop[-1].hooks[0].command' "$AGENT_WATCHER_CLAUDE_SETTINGS")" "$ROOT/bin/agent-watcher-hook claude done" "absolute hook path"
+assert_eq "$(jq -r '.hooks.Stop[-1].hooks[0].timeout' "$AGENT_WATCHER_CLAUDE_SETTINGS")" 5 "claude timeout in seconds"
+assert_eq "$("$SETUP" status claude)" "claude installed" "status after install"
+"$SETUP" install claude >/dev/null
+assert_eq "$(jq -r '[.hooks.Stop[].hooks[].command | select(contains("agent-watcher-hook"))] | length' "$AGENT_WATCHER_CLAUDE_SETTINGS")" 1 "second install does not duplicate"
+"$SETUP" remove claude; rc=$?
+assert_eq "$rc" 0 "remove exits 0"
+assert_eq "$(jq -r '[.hooks[][]?.hooks[]?.command // "" | select(contains("agent-watcher"))] | length' "$AGENT_WATCHER_CLAUDE_SETTINGS")" 0 "remove strips all our hooks"
+assert_eq "$(jq -r '.hooks.Stop[0].hooks[0].command' "$AGENT_WATCHER_CLAUDE_SETTINGS")" "notify-send done" "foreign hook survives remove"
+assert_eq "$(jq -r '.hooks | keys | join(",")' "$AGENT_WATCHER_CLAUDE_SETTINGS")" Stop "emptied events are dropped"
+assert_eq "$("$SETUP" status claude)" "claude not-installed" "status after remove"
+
+echo "== setup: invalid json is refused"
+printf '{ nope' > "$AGENT_WATCHER_CLAUDE_SETTINGS"
+err=$("$SETUP" install claude 2>&1 >/dev/null); rc=$?
+assert_eq "$rc" 1 "install on invalid JSON exits 1"
+case "$err" in error:*) ok ;; *) ko "error message on stderr (got '$err')" ;; esac
+assert_eq "$(cat "$AGENT_WATCHER_CLAUDE_SETTINGS")" "{ nope" "invalid file left untouched"
+
+echo "== setup: codex / gemini / opencode"
+"$SETUP" install codex >/dev/null; rc=$?
+assert_eq "$rc" 0 "codex install creates hooks.json"
+assert_eq "$(jq -r '.hooks.Stop[0].hooks[0].command' "$AGENT_WATCHER_CODEX_HOOKS")" "$ROOT/bin/agent-watcher-hook codex done" "codex Stop hook"
+assert_eq "$(jq -r '.hooks | keys | sort | join(",")' "$AGENT_WATCHER_CODEX_HOOKS")" "PermissionRequest,PostToolUse,SessionEnd,SessionStart,Stop,UserPromptSubmit" "codex events"
+assert_eq "$("$SETUP" status codex)" "codex installed" "codex status"
+"$SETUP" remove codex >/dev/null
+assert_eq "$("$SETUP" status codex)" "codex not-installed" "codex removed"
+
+"$SETUP" install gemini >/dev/null; rc=$?
+assert_eq "$rc" 0 "gemini install"
+assert_eq "$(jq -r '.hooks | keys | sort | join(",")' "$AGENT_WATCHER_GEMINI_SETTINGS")" "AfterAgent,AfterTool,BeforeAgent,Notification,SessionEnd,SessionStart" "gemini events"
+assert_eq "$(jq -r '.hooks.AfterAgent[0].hooks[0].timeout' "$AGENT_WATCHER_GEMINI_SETTINGS")" 5000 "gemini timeout in milliseconds"
+assert_eq "$(jq -r '.hooks.AfterAgent[0].hooks[0].command' "$AGENT_WATCHER_GEMINI_SETTINGS")" "$ROOT/bin/agent-watcher-hook gemini done" "gemini AfterAgent -> done"
+assert_eq "$("$SETUP" status gemini)" "gemini installed" "gemini status"
+
+"$SETUP" install opencode >/dev/null; rc=$?
+assert_eq "$rc" 0 "opencode install"
+assert_file "$AGENT_WATCHER_OPENCODE_PLUGIN" "opencode plugin file created"
+grep -q "\"$ROOT/bin/agent-watcher-hook\"" "$AGENT_WATCHER_OPENCODE_PLUGIN" && ok || ko "opencode plugin has the hook path substituted"
+grep -q "__HOOK_PATH__" "$AGENT_WATCHER_OPENCODE_PLUGIN" && ko "placeholder left in opencode plugin" || ok
+node --input-type=module -e "import('file://$AGENT_WATCHER_OPENCODE_PLUGIN').then(m => { if (typeof m.AgentWatcher !== 'function') process.exit(1) })" && ok || ko "opencode plugin is importable ESM exporting AgentWatcher"
+assert_eq "$("$SETUP" status opencode)" "opencode installed" "opencode status"
+"$SETUP" remove opencode >/dev/null
+assert_nofile "$AGENT_WATCHER_OPENCODE_PLUGIN" "opencode remove deletes the plugin"
+
+echo "== setup: status all / agent-missing / usage"
+assert_eq "$("$SETUP" status all | wc -l)" 4 "status all prints four lines"
+assert_eq "$(PATH="$TMP/emptybin:/usr/bin:/bin" AGENT_WATCHER_CODEX_HOOKS="$TMP/nowhere/codex/hooks.json" "$SETUP" status codex)" "codex agent-missing" "no binary and no config dir -> agent-missing"
+assert_eq "$(PATH="$TMP/emptybin:/usr/bin:/bin" "$SETUP" status gemini)" "gemini installed" "installed wins even without the binary on PATH"
+"$SETUP" frobnicate claude >/dev/null 2>&1; rc=$?
+assert_eq "$rc" 2 "usage error exits 2"
+
 echo
 echo "hook tests: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
