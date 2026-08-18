@@ -70,7 +70,11 @@ BarWidget {
 
   function focusSession(session) {
     if (!session || session.windowAddress === "") return
-    Hyprland.dispatch("focuswindow address:0x" + session.windowAddress)
+    var target = "address:0x" + session.windowAddress
+    // Hyprland >= 0.56 (Lua dispatch API) and the classic form for older builds;
+    // whichever the compositor rejects is a harmless no-op.
+    Hyprland.dispatch('hl.dsp.focus{window="' + target + '"}')
+    Hyprland.dispatch("focuswindow " + target)
   }
 
   // ---- Panel plumbing (open/close/opened contract for shell.summon|hide|toggle).

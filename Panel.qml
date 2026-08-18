@@ -37,15 +37,23 @@ Panel {
     interval: 1000
     running: root.opened
     repeat: true
+    triggeredOnStart: true
     onTriggered: {
       root.nowSec = Math.floor(Date.now() / 1000)
       root.tick++
+      root.refreshLookup()
+      root.refreshGroups()
     }
   }
 
-  // address -> { workspaceId, title } from the live toplevels.
-  function windowLookup() {
-    var dep = root.tick
+  // address -> { workspaceId, title } from the live toplevels. Reassigned
+  // (a new object reference) only when the content actually changed, so the
+  // Repeaters below don't tear down/rebuild every delegate (and flicker the
+  // hover highlight under a still pointer) on every 1 s tick.
+  property var lookup: ({})
+  property string lookupKey: ""
+
+  function refreshLookup() {
     var out = {}
     var values = Hyprland.toplevels.values
     for (var i = 0; i < values.length; i++) {
@@ -54,17 +62,41 @@ Panel {
       if (addr === "") continue
       out[addr] = { workspaceId: tl.workspace ? tl.workspace.id : -1, title: tl.title || "" }
     }
-    return out
+    var key = JSON.stringify(out)
+    if (key !== root.lookupKey) {
+      root.lookupKey = key
+      root.lookup = out
+    }
   }
 
-  readonly property var lookup: windowLookup()
   readonly property int focusedWorkspaceId: {
-    var dep = root.tick
     if (Hyprland.focusedWorkspace) return Hyprland.focusedWorkspace.id
     if (Hyprland.focusedMonitor && Hyprland.focusedMonitor.activeWorkspace) return Hyprland.focusedMonitor.activeWorkspace.id
     return -1
   }
-  readonly property var groups: Model.groupByWorkspace(sessionList, lookup, focusedWorkspaceId, blinkSettings)
+
+  property var groups: []
+  property string groupsKey: ""
+
+  function refreshGroups() {
+    var g = Model.groupByWorkspace(sessionList, lookup, focusedWorkspaceId, blinkSettings)
+    var key = JSON.stringify(g)
+    if (key !== root.groupsKey) {
+      root.groupsKey = key
+      root.groups = g
+    }
+  }
+
+  // Recompute both derived collections; called on open, on the 1 s tick
+  // while open, and whenever their real inputs change.
+  function refreshDerived() {
+    root.refreshLookup()
+    root.refreshGroups()
+  }
+
+  onSessionListChanged: root.refreshDerived()
+  onFocusedWorkspaceIdChanged: root.refreshDerived()
+  onBlinkSettingsChanged: root.refreshDerived()
 
   // ---- Hook setup state.
   property var hookStatus: ({})
@@ -107,6 +139,12 @@ Panel {
   }
 
   function open() {
+    // Timer.triggeredOnStart lands a tick late; set these immediately so the
+    // first paint after summon never shows a stale (potentially hours-off)
+    // elapsed time.
+    root.nowSec = Math.floor(Date.now() / 1000)
+    root.tick++
+    root.refreshDerived()
     root.controller.show()
     refreshHookStatus()
     if (root.host) root.host.requestDump()
@@ -275,6 +313,7 @@ Panel {
                   spacing: Style.space(6)
 
                   Rectangle {
+                    id: agentChip
                     anchors.verticalCenter: parent.verticalCenter
                     width: agentTag.implicitWidth + Style.space(8)
                     height: agentTag.implicitHeight + Style.space(2)
@@ -293,6 +332,9 @@ Panel {
 
                   Text {
                     anchors.verticalCenter: parent.verticalCenter
+                    // Bounded so ElideRight actually engages instead of
+                    // overflowing under the elapsed label for long basenames.
+                    width: Math.min(implicitWidth, Math.max(0, line1.width - agentChip.width - stateText.implicitWidth - line1.spacing * 2))
                     text: Model.projectName(row.modelData.cwd)
                     color: root.barForeground
                     font.family: root.fontFamily
@@ -302,6 +344,7 @@ Panel {
                   }
 
                   Text {
+                    id: stateText
                     anchors.verticalCenter: parent.verticalCenter
                     text: Model.displayState(row.modelData)
                     color: root.stateColor(row.modelData)
@@ -421,7 +464,10 @@ Panel {
                 id: actionMouse
                 anchors.fill: parent
                 hoverEnabled: true
-                enabled: !hookRow.busy
+                // Disabled while ANY agent's setup is running, not just this
+                // row's, so a click during another install is never silently
+                // swallowed by setupProc already being busy.
+                enabled: root.busyAgent === ""
                 cursorShape: Qt.PointingHandCursor
                 onClicked: root.runSetup(hookRow.installed ? "remove" : "install", hookRow.modelData.id)
               }
