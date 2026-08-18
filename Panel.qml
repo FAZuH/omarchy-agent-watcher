@@ -101,6 +101,9 @@ Panel {
   // ---- Hook setup state.
   property var hookStatus: ({})
   property string busyAgent: ""
+  // Last failed install/remove: shown on that agent's row until it is retried.
+  property string setupFailedAgent: ""
+  property string setupFailedText: ""
   readonly property bool anyHooksInstalled: {
     for (var k in hookStatus) if (hookStatus[k] === "installed") return true
     return false
@@ -134,6 +137,9 @@ Panel {
   function runSetup(action, agent) {
     if (!root.host || setupProc.running) return
     root.busyAgent = agent
+    root.setupFailedAgent = ""
+    root.setupFailedText = ""
+    setupProc.lastError = ""
     setupProc.command = [root.host.setupScript, action, agent]
     setupProc.running = true
   }
@@ -175,7 +181,18 @@ Panel {
 
   Process {
     id: setupProc
+    property string lastError: ""
+    // The setup script refuses to touch a config it cannot parse and explains
+    // why on stderr; without this the chip would just flip back to Install.
+    stderr: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: setupProc.lastError = String(text || "").split("\n")[0]
+    }
     onExited: function(code, status) {
+      if (code !== 0) {
+        root.setupFailedAgent = root.busyAgent
+        root.setupFailedText = setupProc.lastError !== "" ? setupProc.lastError : "failed"
+      }
       root.busyAgent = ""
       root.refreshHookStatus()
     }
@@ -413,6 +430,7 @@ Panel {
             readonly property bool installed: status === "installed"
             readonly property bool missing: status === "agent-missing"
             readonly property bool busy: root.busyAgent === modelData.id
+            readonly property bool failed: root.setupFailedAgent === modelData.id
             width: content.width
             height: hookName.implicitHeight + Style.space(10)
 
@@ -436,9 +454,11 @@ Panel {
               anchors.rightMargin: Style.space(10)
               anchors.verticalCenter: parent.verticalCenter
               elide: Text.ElideRight
-              text: (hookRow.busy ? "working…" : Model.hookStatusLabel(hookRow.status))
-                + (hookRow.installed && hookRow.modelData.id === "codex" ? "  (run /hooks in Codex once to trust)" : "")
-              color: hookRow.installed ? root.doneColor : root.mutedForeground
+              text: hookRow.failed ? root.setupFailedText
+                : (hookRow.busy ? "working…" : Model.hookStatusLabel(hookRow.status))
+                  + (hookRow.installed && hookRow.modelData.id === "codex" ? "  (run /hooks in Codex once to trust)" : "")
+              color: hookRow.failed ? root.waitingColor
+                : (hookRow.installed ? root.doneColor : root.mutedForeground)
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
             }
