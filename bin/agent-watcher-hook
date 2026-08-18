@@ -26,20 +26,37 @@ agent_pattern() { # ERE matched against an ancestor's cmdline (NULs -> spaces)
 
 cmdline_of() { tr '\0' ' ' < "/proc/$1/cmdline" 2>/dev/null; }
 
+# Internal helper processes an agent spawns for its own background sessions.
+# A hook fired from underneath one of these belongs to the agent's plumbing,
+# not to a session the user opened, so it is ignored (Claude Code 2.1.x runs a
+# `claude daemon` that starts `bg-pty-host` sessions and pre-warmed spares,
+# each of which fires SessionStart with its own session id).
+helper_pattern() { # ERE matched against an ancestor's cmdline; empty = none
+  case "$1" in
+    claude) printf '%s' '(^|[/ ])claude (daemon|bg-pty-host|bg-spare)( |$)|--bg-pty-host|--bg-spare' ;;
+    *)      printf '%s' '' ;;
+  esac
+}
+
 alive() { # alive <pid> <agent>: process exists and still looks like that agent
   [ -n "$1" ] && [ "$1" -gt 0 ] 2>/dev/null && [ -d "/proc/$1" ] || return 1
   cmdline_of "$1" | grep -Eq "$(agent_pattern "$2")"
 }
 
-# Walk the parent chain. Sets AGENT_PID (first ancestor whose cmdline matches
-# the agent, skipping only this script itself -- an agent may well carry
-# "agent-watcher" in its argv, e.g. a prompt about this plugin) and, when need_window=1,
-# WINDOW_ADDRESS (first ancestor that owns a Hyprland client, bare hex).
+# Walk the whole parent chain. Sets AGENT_PID (first ancestor whose cmdline
+# matches the agent, skipping only this script itself -- an agent may well
+# carry "agent-watcher" in its argv, e.g. a prompt about this plugin),
+# HELPER_ANCESTOR=1 when any ancestor matches the agent's helper pattern, and,
+# when need_window=1, WINDOW_ADDRESS (first ancestor that owns a Hyprland
+# client, bare hex). The walk never stops early: helper processes sit above
+# the agent process, so they must be seen even when the window is cached.
 resolve_ancestry() { # resolve_ancestry <agent> <need_window:0|1>
-  local agent="$1" need_window="$2" pid=$$ pattern clients="" cmd
+  local agent="$1" need_window="$2" pid=$$ pattern helpers clients="" cmd
   pattern=$(agent_pattern "$agent")
+  helpers=$(helper_pattern "$agent")
   AGENT_PID=0
   WINDOW_ADDRESS=""
+  HELPER_ANCESTOR=0
   if [ "$need_window" = 1 ]; then
     clients=$(hyprctl clients -j 2>/dev/null | jq -r '.[] | "\(.pid) \(.address)"' 2>/dev/null)
   fi
@@ -48,10 +65,12 @@ resolve_ancestry() { # resolve_ancestry <agent> <need_window:0|1>
     if [ "$AGENT_PID" = 0 ] && [ "${cmd#*agent-watcher-hook}" = "$cmd" ] && printf '%s' "$cmd" | grep -Eq "$pattern"; then
       AGENT_PID=$pid
     fi
+    if [ -n "$helpers" ] && [ "$HELPER_ANCESTOR" = 0 ] && printf '%s' "$cmd" | grep -Eq "$helpers"; then
+      HELPER_ANCESTOR=1
+    fi
     if [ -n "$clients" ] && [ -z "$WINDOW_ADDRESS" ]; then
       WINDOW_ADDRESS=$(printf '%s\n' "$clients" | awk -v p="$pid" '$1 == p { sub(/^0x/, "", $2); print tolower($2); exit }')
     fi
-    if [ "$AGENT_PID" != 0 ] && { [ "$need_window" != 1 ] || [ -n "$WINDOW_ADDRESS" ]; }; then break; fi
     pid=$(awk '/^PPid:/ { print $2 }' "/proc/$pid/status" 2>/dev/null)
   done
 }
@@ -157,6 +176,12 @@ if [ -n "$PREV_WINDOW" ]; then
   WINDOW_ADDRESS="$PREV_WINDOW"
 else
   resolve_ancestry "$AGENT" 1
+fi
+# A session spawned by the agent's own background plumbing is not the user's:
+# ignore it and drop anything an earlier event of it may have written.
+if [ "${HELPER_ANCESTOR:-0}" = 1 ]; then
+  rm -f "$FILE"
+  exit 0
 fi
 [ "$AGENT_PID" != 0 ] || AGENT_PID="${PREV_PID:-0}"
 case $AGENT_PID in ''|*[!0-9]*) AGENT_PID=0 ;; esac

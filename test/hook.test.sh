@@ -200,6 +200,27 @@ else
 fi
 rm -rf "$AGENT_WATCHER_STATE_DIR"
 
+echo "== hook: agent-internal helper sessions are ignored"
+reset_logs
+mkdir -p "$AGENT_WATCHER_STATE_DIR"
+# Mimics Claude Code's daemon plumbing: a "claude bg-pty-host" process sits
+# between the (background) session and the terminal. The bash stays alive as
+# the parent so the hook sees it in the ancestor chain.
+cat > "$TMP/bin/claude-bg" <<EOF
+#!/usr/bin/env bash
+exec -a claude bash -c 'shift 3; "$TMP/bin/claude" "\$@"; exit \$?' claude bg-pty-host --bg-pty-host /tmp/x.sock "\$@"
+EOF
+chmod +x "$TMP/bin/claude-bg"
+printf '{"session_id":"bg1","cwd":"/tmp/x"}' | "$TMP/bin/claude-bg" session-start; rc=$?
+assert_eq "$rc" 0 "helper-spawned session exits 0"
+assert_nofile "$AGENT_WATCHER_STATE_DIR/claude-bg1.json" "helper-spawned session writes no state file"
+printf '{"agent":"claude","sessionId":"bg1","state":"idle","cwd":"/tmp/x","agentPid":0,"windowAddress":"abc123","updatedAt":1,"lastEvent":"session-start"}' > "$AGENT_WATCHER_STATE_DIR/claude-bg1.json"
+printf '{"session_id":"bg1","cwd":"/tmp/x"}' | "$TMP/bin/claude-bg" prompt
+assert_nofile "$AGENT_WATCHER_STATE_DIR/claude-bg1.json" "helper-spawned session's stale file is removed on its next event"
+run_agent claude session-start '{"session_id":"n1","cwd":"/tmp/x"}' >/dev/null
+assert_file "$AGENT_WATCHER_STATE_DIR/claude-n1.json" "normal session still tracked"
+assert_eq "$(field "$AGENT_WATCHER_STATE_DIR/claude-n1.json" .windowAddress)" abc123 "normal session still resolves its window with the full walk"
+
 echo "== setup: claude merge / idempotence / remove"
 export AGENT_WATCHER_CLAUDE_SETTINGS="$TMP/cfg/claude/settings.json"
 export AGENT_WATCHER_CODEX_HOOKS="$TMP/cfg/codex/hooks.json"

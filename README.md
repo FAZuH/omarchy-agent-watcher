@@ -90,8 +90,10 @@ a window — click-to-focus works on both generations.
   again even if you'd already looked at them.
 - Sessions without a Hyprland window (tmux/screen, SSH) appear under
   **Other**, without click-to-focus.
-- Sub-agent sessions (Claude Code subagents, OpenCode child sessions) are
-  intentionally not listed — only top-level sessions are.
+- Sub-agent sessions (Claude Code subagents, OpenCode child sessions) and
+  Claude Code's own background plumbing (the `claude daemon` and the
+  `bg-pty-host` sessions it pre-spawns) are intentionally not listed — only
+  the sessions you opened are.
 
 ## Develop
 
