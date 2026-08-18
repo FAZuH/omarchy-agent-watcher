@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+# Agent Watcher hook: turns one agent hook invocation into a state-file update
+# plus a shell ping, or dumps the current state for the shell.
+#
+#   agent-watcher-hook <agent> <event>     stdin: the agent's hook JSON
+#   agent-watcher-hook dump                prune dead sessions, print JSON array
+#
+#   agent: claude | codex | gemini | opencode
+#   event: session-start | prompt | waiting | tool-done | done | session-end
+#
+# Silent and always exit 0 on the hook path: agents treat exit codes and
+# stdout as control signals. Set AGENT_WATCHER_DEBUG=1 to keep stderr.
+
+STATE_DIR="${AGENT_WATCHER_STATE_DIR:-${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/omarchy-agent-watcher}"
+PLUGIN_ID="io.github.5d0tal1gat0r.agent-watcher"
+
+agent_pattern() { # ERE matched against an ancestor's cmdline (NULs -> spaces)
+  case "$1" in
+    claude)   printf '%s' '(^|[/ ])claude([ -]|$)' ;;
+    codex)    printf '%s' '(^|[/ ])codex([ -]|$)' ;;
+    gemini)   printf '%s' 'gemini' ;;
+    opencode) printf '%s' '(^|[/ ])opencode([ -]|$)' ;;
+    *)        printf '%s' '^$' ;;
+  esac
+}
+
+cmdline_of() { tr '\0' ' ' < "/proc/$1/cmdline" 2>/dev/null; }
+
+alive() { # alive <pid> <agent>: process exists and still looks like that agent
+  [ -n "$1" ] && [ "$1" -gt 0 ] 2>/dev/null && [ -d "/proc/$1" ] || return 1
+  cmdline_of "$1" | grep -Eq "$(agent_pattern "$2")"
+}
+
+# Walk the parent chain. Sets AGENT_PID (first ancestor whose cmdline matches
+# the agent, skipping our own wrappers) and, when need_window=1,
+# WINDOW_ADDRESS (first ancestor that owns a Hyprland client, bare hex).
+resolve_ancestry() { # resolve_ancestry <agent> <need_window:0|1>
+  local agent="$1" need_window="$2" pid=$$ pattern clients="" cmd
+  pattern=$(agent_pattern "$agent")
+  AGENT_PID=0
+  WINDOW_ADDRESS=""
+  if [ "$need_window" = 1 ]; then
+    clients=$(hyprctl clients -j 2>/dev/null | jq -r '.[] | "\(.pid) \(.address)"' 2>/dev/null)
+  fi
+  while [ -n "$pid" ] && [ "$pid" -gt 1 ] 2>/dev/null; do
+    cmd=$(cmdline_of "$pid")
+    if [ "$AGENT_PID" = 0 ] && [ "${cmd#*agent-watcher}" = "$cmd" ] && printf '%s' "$cmd" | grep -Eq "$pattern"; then
+      AGENT_PID=$pid
+    fi
+    if [ -n "$clients" ] && [ -z "$WINDOW_ADDRESS" ]; then
+      WINDOW_ADDRESS=$(printf '%s\n' "$clients" | awk -v p="$pid" '$1 == p { sub(/^0x/, "", $2); print tolower($2); exit }')
+    fi
+    if [ "$AGENT_PID" != 0 ] && { [ "$need_window" != 1 ] || [ -n "$WINDOW_ADDRESS" ]; }; then break; fi
+    pid=$(awk '/^PPid:/ { print $2 }' "/proc/$pid/status" 2>/dev/null)
+  done
+}
+
+ping_shell() {
+  local cli
+  cli=$(command -v omarchy-shell 2>/dev/null)
+  [ -n "$cli" ] || cli=/usr/share/omarchy/bin/omarchy-shell
+  [ -x "$cli" ] || return 0
+  OMARCHY_PATH="${OMARCHY_PATH:-/usr/share/omarchy}" "$cli" -q "$PLUGIN_ID" refresh >/dev/null 2>&1 || true
+}
+
+dump() {
+  mkdir -p "$STATE_DIR" 2>/dev/null
+  local f agent pid any=0
+  for f in "$STATE_DIR"/*.json; do
+    [ -e "$f" ] || continue
+    if ! agent=$(jq -er '.agent' "$f" 2>/dev/null); then rm -f "$f"; continue; fi
+    pid=$(jq -r '.agentPid // 0' "$f" 2>/dev/null)
+    if [ "${pid:-0}" -gt 0 ] 2>/dev/null && ! alive "$pid" "$agent"; then rm -f "$f"; continue; fi
+    any=1
+  done
+  if [ "$any" = 1 ]; then
+    jq -s 'map(select(type == "object"))' "$STATE_DIR"/*.json 2>/dev/null || printf '[]'
+  else
+    printf '[]'
+  fi
+}
+
+if [ "${1:-}" = dump ]; then
+  dump
+  exit 0
+fi
+
+# ---- hook path: from here on nothing reaches stdout, and we always exit 0.
+exec 1>/dev/null
+[ "${AGENT_WATCHER_DEBUG:-0}" = 1 ] || exec 2>/dev/null
+
+AGENT="${1:-}"
+EVENT="${2:-}"
+case "$AGENT" in claude|codex|gemini|opencode) ;; *) exit 0 ;; esac
+case "$EVENT" in
+  session-start) STATE=idle ;;
+  prompt)        STATE=working ;;
+  waiting)       STATE=waiting ;;
+  tool-done)     STATE=working ;;
+  done)          STATE=done ;;
+  session-end)   STATE="" ;;
+  *) exit 0 ;;
+esac
+
+INPUT=$(cat 2>/dev/null)
+printf '%s' "$INPUT" | jq -e . >/dev/null 2>&1 || INPUT='{}'
+SESSION_ID=$(printf '%s' "$INPUT" | jq -r '.session_id // .sessionID // .sessionId // empty' 2>/dev/null)
+CWD=$(printf '%s' "$INPUT" | jq -r '.cwd // .directory // empty' 2>/dev/null)
+
+# Gemini fires Notification for more than permissions; only ToolPermission blocks.
+if [ "$AGENT" = gemini ] && [ "$EVENT" = waiting ]; then
+  nt=$(printf '%s' "$INPUT" | jq -r '.notification_type // empty' 2>/dev/null)
+  [ -z "$nt" ] || [ "$nt" = ToolPermission ] || exit 0
+fi
+
+AGENT_PID=0
+WINDOW_ADDRESS=""
+if [ -z "$SESSION_ID" ]; then
+  resolve_ancestry "$AGENT" 0
+  SESSION_ID="pid$AGENT_PID"
+fi
+SAFE_ID=$(printf '%s' "$SESSION_ID" | tr -c 'A-Za-z0-9._-' '_')
+FILE="$STATE_DIR/$AGENT-$SAFE_ID.json"
+
+if [ "$EVENT" = session-end ]; then
+  rm -f "$FILE"
+  ping_shell
+  exit 0
+fi
+
+PREV_STATE=""; PREV_WINDOW=""; PREV_PID=0; PREV_CWD=""
+if [ -f "$FILE" ]; then
+  IFS=$'\t' read -r PREV_STATE PREV_WINDOW PREV_PID PREV_CWD < <(
+    jq -r '[(.state // ""), (.windowAddress // ""), ((.agentPid // 0) | tostring), (.cwd // "")] | @tsv' "$FILE" 2>/dev/null)
+fi
+# tool-done only matters while blocked on a permission.
+if [ "$EVENT" = tool-done ] && [ "$PREV_STATE" != waiting ]; then exit 0; fi
+
+# The window is resolved once per session (hyprctl is the expensive part).
+if [ -n "$PREV_WINDOW" ]; then
+  resolve_ancestry "$AGENT" 0
+  WINDOW_ADDRESS="$PREV_WINDOW"
+else
+  resolve_ancestry "$AGENT" 1
+fi
+[ "$AGENT_PID" != 0 ] || AGENT_PID="${PREV_PID:-0}"
+[ -n "$CWD" ] || CWD="$PREV_CWD"
+
+mkdir -p "$STATE_DIR" 2>/dev/null || exit 0
+NOW=$(date +%s)
+TMP="$FILE.tmp.$$"
+if jq -n --arg agent "$AGENT" --arg sessionId "$SESSION_ID" --arg state "$STATE" --arg cwd "$CWD" \
+      --argjson agentPid "${AGENT_PID:-0}" --arg windowAddress "$WINDOW_ADDRESS" \
+      --argjson updatedAt "$NOW" --arg lastEvent "$EVENT" \
+      '{agent: $agent, sessionId: $sessionId, state: $state, cwd: $cwd, agentPid: $agentPid,
+        windowAddress: $windowAddress, updatedAt: $updatedAt, lastEvent: $lastEvent}' > "$TMP" 2>/dev/null; then
+  mv -f "$TMP" "$FILE" 2>/dev/null
+fi
+rm -f "$TMP" 2>/dev/null
+ping_shell
+exit 0
