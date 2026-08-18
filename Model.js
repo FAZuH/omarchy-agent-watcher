@@ -11,7 +11,7 @@ var AGENTS = [
 ]
 var STATES = ["working", "waiting", "done", "idle"]
 var STATE_RANK = { waiting: 0, done: 1, working: 2, idle: 3 }
-var BAR_ICON = "\uDB81\uDEA9" // nf-md-robot (U+F06A9)
+var BAR_ICON = "\uDB81\uDFAE" // nf-md-cctv (U+F07AE) — distinct from omarchy.agents' robot
 var OTHER_GROUP_ID = -1
 
 function trimString(value) {
@@ -234,7 +234,7 @@ function barSummary(list, settings) {
 }
 
 // Pieces of the pill text, pre-spaced so the colored overlay Row in
-// BarWidget.qml and the sizing label agree exactly: "󱚣 2 · 1".
+// BarWidget.qml and the sizing label agree exactly: "󰞮 2 · 1".
 function barParts(summary) {
   var s = summary || { working: 0, attention: 0 }
   return {

@@ -15,7 +15,7 @@ row in the panel to jump straight to it.
 omarchy plugin add https://github.com/5d0tal1gat0r/omarchy-agent-watcher.git --enable
 ```
 
-Then open the panel (click the robot) and press **Install** next to each agent
+Then open the panel (click the camera) and press **Install** next to each agent
 you use. That adds a few hook entries to the agent's own config:
 
 | agent | what gets written | note |
@@ -53,7 +53,7 @@ plugin directory and would otherwise fail on every agent turn.
 | panel | click a session | focus its window (switches workspace) |
 | panel | Install / Remove | manage that agent's hooks |
 
-Pill: `󱚣 2 · 1` = 2 sessions working, 1 needs attention. Dimmed icon = no
+Pill: `󰞮 2 · 1` = 2 sessions working, 1 needs attention. Dimmed icon = no
 sessions. Blink colors come from your theme (`green` / `yellow`).
 
 IPC (for keybindings): `omarchy-shell io.github.5d0tal1gat0r.agent-watcher toggle|open|close|refresh`
