@@ -22,7 +22,7 @@ Panel {
   readonly property var barIdentity: hostWidget || root
 
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
-  readonly property color mutedForeground: Qt.darker(barForeground, 1.5)
+  readonly property color mutedForeground: Qt.darker(barForeground, 1.4)
   readonly property color doneColor: host ? host.doneColor : "#5fbf6f"
   readonly property color waitingColor: host ? host.waitingColor : "#d8a657"
   readonly property var blinkSettings: host ? host.blinkSettings : ({})
@@ -113,7 +113,7 @@ Panel {
     var ds = Model.displayState(session)
     if (ds === "waiting") return root.waitingColor
     if (ds === "done") return root.doneColor
-    if (ds === "working") return root.barForeground
+    if (ds === "working") return root.accentColor
     return root.mutedForeground
   }
 
@@ -198,6 +198,13 @@ Panel {
     }
   }
 
+
+  // Popup-card fill helper (same recipe the first-party panels use).
+  function alpha(c, a) { return Qt.rgba(c.r, c.g, c.b, a) }
+  readonly property color dimForeground: Qt.darker(barForeground, 1.4)
+  readonly property color accentColor: Color.accent
+  readonly property color urgentForeground: bar ? bar.urgent : Color.urgent
+
   KeyboardPanel {
     id: panel
     anchorItem: root.anchorItem
@@ -205,7 +212,7 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(440))
+    contentWidth: panel.fittedContentWidth(Style.space(460))
     contentHeight: panel.fittedContentHeight(content.implicitHeight)
 
     PanelKeyCatcher {
@@ -218,55 +225,73 @@ Panel {
       Column {
         id: content
         width: parent.width
-        spacing: Style.space(8)
+        spacing: Style.space(10)
 
-        // ---- Header: title + summary.
-        Item {
+        // ---------- Hero: camera mark · title · live summary ----------
+        PanelHero {
           width: parent.width
-          height: headerTitle.implicitHeight
+          title: "Agent Watcher"
+          meta: Model.summaryLine(root.summary)
+          foreground: root.barForeground
+          fontFamily: root.fontFamily
 
-          Text {
-            id: headerTitle
-            anchors.left: parent.left
-            anchors.leftMargin: Style.space(8)
-            anchors.verticalCenter: parent.verticalCenter
-            text: "Agent sessions"
-            color: root.barForeground
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.subtitle
-            font.bold: true
+          iconComponent: Component {
+            OpticalGlyph {
+              width: Style.font.display
+              height: Style.font.display
+              text: Model.BAR_ICON
+              fontFamily: root.fontFamily
+              fontSize: Style.font.display
+              color: root.summary.blink && root.host ? root.host.attentionColor : root.accentColor
+            }
           }
 
-          Text {
-            anchors.right: parent.right
-            anchors.rightMargin: Style.space(8)
-            anchors.verticalCenter: parent.verticalCenter
-            text: Model.summaryLine(root.summary)
-            color: root.mutedForeground
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
+          trailingControl: Component {
+            PanelActionButton {
+              iconText: ""
+              tooltipText: "Refresh"
+              foreground: root.barForeground
+              hoverColor: root.accentColor
+              fontFamily: root.fontFamily
+              onClicked: if (root.host) root.host.requestDump()
+            }
           }
         }
 
         PanelSeparator { foreground: root.barForeground }
 
-        // ---- Empty state.
-        Text {
+        // ---------- Empty state ----------
+        Column {
           visible: root.sessionList.length === 0
           width: parent.width
-          leftPadding: Style.space(8)
-          rightPadding: Style.space(8)
-          wrapMode: Text.WordWrap
-          text: root.anyHooksInstalled
-            ? "No sessions yet — start an agent in a terminal."
-            : "Install hooks below to start tracking."
-          color: root.mutedForeground
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.bodySmall
-          font.italic: true
+          spacing: Style.space(6)
+          topPadding: Style.space(10)
+          bottomPadding: Style.space(6)
+
+          OpticalGlyph {
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: Style.font.displayLarge
+            height: Style.font.displayLarge
+            text: Model.BAR_ICON
+            fontFamily: root.fontFamily
+            fontSize: Style.font.displayLarge
+            color: root.alpha(root.dimForeground, 0.55)
+          }
+
+          Text {
+            width: parent.width
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.WordWrap
+            text: root.anyHooksInstalled
+              ? "No sessions yet — start an agent in a terminal."
+              : "Install hooks below to start tracking."
+            color: root.dimForeground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+          }
         }
 
-        // ---- One block per workspace.
+        // ---------- One block per workspace ----------
         Repeater {
           model: root.groups
 
@@ -274,126 +299,169 @@ Panel {
             id: group
             required property var modelData
             width: content.width
-            spacing: 0
+            spacing: Style.space(4)
 
-            Item {
-              width: parent.width
-              height: groupLabel.implicitHeight + Style.space(6)
-
-              Text {
-                id: groupLabel
-                anchors.left: parent.left
-                anchors.leftMargin: Style.space(8)
-                anchors.verticalCenter: parent.verticalCenter
-                text: group.modelData.label + (group.modelData.current ? "  · current" : "")
-                color: root.mutedForeground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                font.bold: true
-              }
+            PanelSectionHeader {
+              leftPadding: Style.space(2)
+              text: group.modelData.label.toUpperCase() + (group.modelData.current ? "  ·  CURRENT" : "")
+              foreground: root.barForeground
+              fontFamily: root.fontFamily
             }
 
             Repeater {
               model: group.modelData.sessions
 
-              Rectangle {
+              Item {
                 id: row
                 required property var modelData
                 readonly property bool attention: Model.needsAttention(modelData, root.blinkSettings)
                 readonly property bool focusable: modelData.windowAddress !== ""
+                readonly property string shownState: Model.displayState(modelData)
+                readonly property color tone: root.stateColor(modelData)
                 width: content.width
-                height: line1.implicitHeight + line2.implicitHeight + Style.space(12)
-                radius: Style.cornerRadius
-                color: rowMouse.containsMouse && row.focusable
-                  ? Style.hoverFillFor(root.barForeground, Color.accent)
-                  : (row.attention ? Style.selectedFillFor(root.barForeground, Color.accent) : "transparent")
+                implicitHeight: lines.implicitHeight + Style.space(14)
+                height: implicitHeight
 
+                // Card: quiet fill, brighter (accent-tinted) when it wants you.
                 Rectangle {
-                  id: dot
-                  anchors.left: parent.left
-                  anchors.leftMargin: Style.space(8)
-                  anchors.verticalCenter: parent.verticalCenter
-                  width: Style.space(8)
-                  height: width
-                  radius: width / 2
-                  color: root.stateColor(row.modelData)
+                  anchors.fill: parent
+                  radius: Style.cornerRadius
+                  color: rowMouse.containsMouse && row.focusable
+                    ? Style.hoverFillFor(root.barForeground, root.accentColor)
+                    : (row.attention ? Style.selectedFillFor(root.barForeground, root.accentColor) : root.alpha(root.barForeground, 0.05))
+                  Behavior on color { ColorAnimation { duration: 120 } }
                 }
 
-                Row {
-                  id: line1
-                  anchors.left: dot.right
-                  anchors.leftMargin: Style.space(8)
-                  anchors.right: elapsed.left
-                  anchors.rightMargin: Style.space(8)
+                // Colored edge on the rows that need attention.
+                Rectangle {
+                  visible: row.attention
+                  anchors.left: parent.left
                   anchors.top: parent.top
-                  anchors.topMargin: Style.space(6)
-                  spacing: Style.space(6)
+                  anchors.bottom: parent.bottom
+                  anchors.margins: Style.space(3)
+                  width: Style.space(3)
+                  radius: width / 2
+                  color: row.tone
+                }
+
+                // State dot: breathes while working, ringed when waiting/done.
+                Item {
+                  id: dotBox
+                  anchors.left: parent.left
+                  anchors.leftMargin: Style.space(14)
+                  anchors.verticalCenter: parent.verticalCenter
+                  width: Style.space(14)
+                  height: width
 
                   Rectangle {
-                    id: agentChip
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: agentTag.implicitWidth + Style.space(8)
-                    height: agentTag.implicitHeight + Style.space(2)
-                    radius: Style.cornerRadius
-                    color: Style.selectedFillFor(root.barForeground, Color.accent)
+                    visible: row.attention
+                    anchors.centerIn: parent
+                    width: parent.width
+                    height: width
+                    radius: width / 2
+                    color: "transparent"
+                    border.width: 1
+                    border.color: root.alpha(row.tone, 0.55)
+                  }
+
+                  Rectangle {
+                    id: dot
+                    anchors.centerIn: parent
+                    width: Style.space(8)
+                    height: width
+                    radius: width / 2
+                    color: row.tone
+
+                    SequentialAnimation on opacity {
+                      running: row.shownState === "working"
+                      loops: Animation.Infinite
+                      NumberAnimation { to: 0.3; duration: 750; easing.type: Easing.InOutSine }
+                      NumberAnimation { to: 1.0; duration: 750; easing.type: Easing.InOutSine }
+                      onStopped: dot.opacity = 1
+                    }
+                  }
+                }
+
+                Column {
+                  id: lines
+                  anchors.left: dotBox.right
+                  anchors.leftMargin: Style.space(10)
+                  anchors.right: elapsed.left
+                  anchors.rightMargin: Style.space(10)
+                  anchors.verticalCenter: parent.verticalCenter
+                  spacing: Style.space(3)
+
+                  Row {
+                    id: line1
+                    width: parent.width
+                    spacing: Style.space(8)
+
+                    // Agent chip, bordered like the panel's tab buttons.
+                    Rectangle {
+                      id: agentChip
+                      anchors.verticalCenter: parent.verticalCenter
+                      width: agentTag.implicitWidth + Style.space(10)
+                      height: agentTag.implicitHeight + Style.space(4)
+                      radius: Style.cornerRadius
+                      color: "transparent"
+                      border.width: 1
+                      border.color: root.alpha(root.barForeground, 0.28)
+
+                      Text {
+                        id: agentTag
+                        anchors.centerIn: parent
+                        text: row.modelData.agent.toUpperCase()
+                        color: root.dimForeground
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.caption
+                        font.bold: true
+                        font.letterSpacing: 0.8
+                      }
+                    }
 
                     Text {
-                      id: agentTag
-                      anchors.centerIn: parent
-                      text: row.modelData.agent
-                      color: root.mutedForeground
+                      anchors.verticalCenter: parent.verticalCenter
+                      text: Model.projectName(row.modelData.cwd)
+                      color: root.barForeground
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.subtitle
+                      font.bold: true
+                      elide: Text.ElideRight
+                      width: Math.min(implicitWidth, Math.max(0, line1.width - agentChip.width - stateText.implicitWidth - line1.spacing * 2))
+                    }
+
+                    Text {
+                      id: stateText
+                      anchors.verticalCenter: parent.verticalCenter
+                      text: row.shownState.toUpperCase()
+                      color: row.tone
                       font.family: root.fontFamily
                       font.pixelSize: Style.font.caption
+                      font.bold: true
+                      font.letterSpacing: 0.8
                     }
                   }
 
                   Text {
-                    anchors.verticalCenter: parent.verticalCenter
-                    // Bounded so ElideRight actually engages instead of
-                    // overflowing under the elapsed label for long basenames.
-                    width: Math.min(implicitWidth, Math.max(0, line1.width - agentChip.width - stateText.implicitWidth - line1.spacing * 2))
-                    text: Model.projectName(row.modelData.cwd)
-                    color: root.barForeground
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.body
-                    font.bold: true
-                    elide: Text.ElideRight
-                  }
-
-                  Text {
-                    id: stateText
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: Model.displayState(row.modelData)
-                    color: root.stateColor(row.modelData)
+                    width: parent.width
+                    text: root.titleFor(row.modelData)
+                    color: root.dimForeground
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
-                    font.bold: row.attention
+                    elide: Text.ElideMiddle
                   }
                 }
 
                 Text {
                   id: elapsed
                   anchors.right: parent.right
-                  anchors.rightMargin: Style.space(8)
-                  anchors.verticalCenter: line1.verticalCenter
+                  anchors.rightMargin: Style.space(12)
+                  anchors.verticalCenter: parent.verticalCenter
                   text: Model.formatElapsed(row.modelData.stateSince, root.nowSec)
-                  color: root.mutedForeground
+                  color: row.attention ? row.tone : root.dimForeground
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
-                }
-
-                Text {
-                  id: line2
-                  anchors.left: line1.left
-                  anchors.right: parent.right
-                  anchors.rightMargin: Style.space(8)
-                  anchors.top: line1.bottom
-                  anchors.topMargin: Style.space(2)
-                  text: root.titleFor(row.modelData)
-                  color: root.mutedForeground
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
-                  elide: Text.ElideMiddle
+                  font.bold: row.attention
                 }
 
                 MouseArea {
@@ -410,14 +478,12 @@ Panel {
 
         PanelSeparator { foreground: root.barForeground }
 
-        // ---- Hooks: one line per agent with Install / Remove.
-        Text {
-          leftPadding: Style.space(8)
-          text: "Hooks"
-          color: root.mutedForeground
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-          font.bold: true
+        // ---------- Hooks: one switch per agent ----------
+        PanelSectionHeader {
+          leftPadding: Style.space(2)
+          text: "HOOKS"
+          foreground: root.barForeground
+          fontFamily: root.fontFamily
         }
 
         Repeater {
@@ -431,71 +497,61 @@ Panel {
             readonly property bool missing: status === "agent-missing"
             readonly property bool busy: root.busyAgent === modelData.id
             readonly property bool failed: root.setupFailedAgent === modelData.id
+            readonly property string caption: failed
+              ? root.setupFailedText
+              : (busy ? "working…"
+                : (Model.hookStatusLabel(status)
+                  + (installed && modelData.id === "codex" ? "  ·  run /hooks in Codex once to trust" : "")))
             width: content.width
-            height: hookName.implicitHeight + Style.space(10)
-
-            Text {
-              id: hookName
-              anchors.left: parent.left
-              anchors.leftMargin: Style.space(8)
-              anchors.verticalCenter: parent.verticalCenter
-              text: hookRow.modelData.name
-              color: hookRow.missing ? root.mutedForeground : root.barForeground
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.bodySmall
-            }
-
-            Text {
-              anchors.left: hookName.right
-              anchors.leftMargin: Style.space(10)
-              // Stop short of the chip: the Codex note is long enough to run
-              // underneath it otherwise.
-              anchors.right: actionChip.left
-              anchors.rightMargin: Style.space(10)
-              anchors.verticalCenter: parent.verticalCenter
-              elide: Text.ElideRight
-              text: hookRow.failed ? root.setupFailedText
-                : (hookRow.busy ? "working…" : Model.hookStatusLabel(hookRow.status))
-                  + (hookRow.installed && hookRow.modelData.id === "codex" ? "  (run /hooks in Codex once to trust)" : "")
-              color: hookRow.failed ? root.waitingColor
-                : (hookRow.installed ? root.doneColor : root.mutedForeground)
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-            }
+            height: hookLabels.implicitHeight + Style.space(12)
 
             Rectangle {
-              id: actionChip
-              visible: !hookRow.missing && hookRow.status !== ""
-              anchors.right: parent.right
-              anchors.rightMargin: Style.space(8)
-              anchors.verticalCenter: parent.verticalCenter
-              width: actionText.implicitWidth + Style.space(12)
-              height: actionText.implicitHeight + Style.space(6)
+              anchors.fill: parent
               radius: Style.cornerRadius
-              color: actionMouse.containsMouse
-                ? Style.hoverFillFor(root.barForeground, Color.accent)
-                : Style.selectedFillFor(root.barForeground, Color.accent)
+              color: root.alpha(root.barForeground, 0.04)
+            }
+
+            Column {
+              id: hookLabels
+              anchors.left: parent.left
+              anchors.leftMargin: Style.space(12)
+              anchors.right: hookSwitch.left
+              anchors.rightMargin: Style.space(12)
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(2)
 
               Text {
-                id: actionText
-                anchors.centerIn: parent
-                text: hookRow.installed ? "Remove" : "Install"
-                color: root.barForeground
+                width: parent.width
+                text: hookRow.modelData.name
+                color: hookRow.missing ? root.dimForeground : root.barForeground
                 font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
+                font.pixelSize: Style.font.body
+                font.bold: true
+                elide: Text.ElideRight
               }
 
-              MouseArea {
-                id: actionMouse
-                anchors.fill: parent
-                hoverEnabled: true
-                // Disabled while ANY agent's setup is running, not just this
-                // row's, so a click during another install is never silently
-                // swallowed by setupProc already being busy.
-                enabled: root.busyAgent === ""
-                cursorShape: Qt.PointingHandCursor
-                onClicked: root.runSetup(hookRow.installed ? "remove" : "install", hookRow.modelData.id)
+              Text {
+                width: parent.width
+                text: hookRow.caption
+                color: hookRow.failed ? root.urgentForeground : (hookRow.installed ? root.doneColor : root.dimForeground)
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                elide: Text.ElideRight
               }
+            }
+
+            ToggleSwitch {
+              id: hookSwitch
+              visible: !hookRow.missing && hookRow.status !== ""
+              anchors.right: parent.right
+              anchors.rightMargin: Style.space(12)
+              anchors.verticalCenter: parent.verticalCenter
+              checked: hookRow.installed
+              busy: hookRow.busy
+              interactive: root.busyAgent === ""
+              foreground: root.barForeground
+              accent: root.accentColor
+              onToggled: root.runSetup(hookRow.installed ? "remove" : "install", hookRow.modelData.id)
             }
           }
         }
@@ -504,11 +560,11 @@ Panel {
 
         Text {
           width: parent.width
-          leftPadding: Style.space(8)
-          rightPadding: Style.space(8)
+          leftPadding: Style.space(2)
+          rightPadding: Style.space(2)
           wrapMode: Text.WordWrap
           text: "Click a session to focus its window · Middle-click the pill to refresh · Remove hooks here before uninstalling the plugin"
-          color: root.mutedForeground
+          color: root.dimForeground
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
         }
