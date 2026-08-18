@@ -79,33 +79,42 @@ valid_json_object() { [ -f "$1" ] && jq -e 'type == "object"' "$1" >/dev/null 2>
 
 backup() { [ -f "$1" ] && cp -f "$1" "$1.agent-watcher.bak"; }
 
+# Configs are often symlinks into a dotfiles repo: resolve to the real file so
+# the atomic mv replaces that instead of the link, and carry its mode over (the
+# tmp file is created under the caller's umask, typically 644).
+real_target() { readlink -f "$1" 2>/dev/null || printf '%s' "$1"; }
+
 merge_hooks() { # merge_hooks <file> <groupsJson>
-  local file="$1" ours="$2" tmp="$1.tmp.$$"
-  if [ -f "$file" ]; then
-    valid_json_object "$file" || die "$file is not valid JSON"
-    backup "$file"
+  local ours="$2" target tmp
+  target=$(real_target "$1"); [ -n "$target" ] || target="$1"
+  tmp="$target.tmp.$$"
+  if [ -f "$target" ]; then
+    valid_json_object "$target" || die "$target is not valid JSON"
+    backup "$target"
   else
-    mkdir -p "$(dirname "$file")" || die "cannot create $(dirname "$file")"
-    printf '{}\n' > "$file"
+    mkdir -p "$(dirname "$target")" || die "cannot create $(dirname "$target")"
+    printf '{}\n' > "$target"
   fi
   jq --arg mark "$MARK" --argjson ours "$ours" "$JQ_STRIP"'
     .hooks = (strip_ours($mark) as $clean
       | reduce ($ours | to_entries[]) as $e ($clean; .[$e.key] = ((.[$e.key] // []) + $e.value)))
-  ' "$file" > "$tmp" && mv -f "$tmp" "$file"
+  ' "$target" > "$tmp" && { chmod --reference="$target" "$tmp" 2>/dev/null; mv -f "$tmp" "$target"; }
   local rc=$?
   rm -f "$tmp"
   return $rc
 }
 
 remove_hooks() { # remove_hooks <file>
-  local file="$1" tmp="$1.tmp.$$"
-  [ -f "$file" ] || return 0
-  valid_json_object "$file" || die "$file is not valid JSON"
-  backup "$file"
+  local target tmp
+  target=$(real_target "$1"); [ -n "$target" ] || target="$1"
+  tmp="$target.tmp.$$"
+  [ -f "$target" ] || return 0
+  valid_json_object "$target" || die "$target is not valid JSON"
+  backup "$target"
   jq --arg mark "$MARK" "$JQ_STRIP"'
     if has("hooks") then .hooks = strip_ours($mark) else . end
     | if (.hooks | type) == "object" and (.hooks | length) == 0 then del(.hooks) else . end
-  ' "$file" > "$tmp" && mv -f "$tmp" "$file"
+  ' "$target" > "$tmp" && { chmod --reference="$target" "$tmp" 2>/dev/null; mv -f "$tmp" "$target"; }
   local rc=$?
   rm -f "$tmp"
   return $rc

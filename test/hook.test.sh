@@ -283,6 +283,30 @@ else
   echo "  (skipped: node not on PATH)"
 fi
 
+echo "== setup: a symlinked config keeps its link, its target and its mode"
+# settings.json is often a symlink into a dotfiles repo: writing must go
+# through to the real file (mv would replace the link) and keep its mode.
+mkdir -p "$TMP/dotfiles"
+REAL="$TMP/dotfiles/claude-settings.json"
+printf '{"model":"opus"}\n' > "$REAL"
+chmod 600 "$REAL"
+export AGENT_WATCHER_CLAUDE_SETTINGS="$TMP/cfg/claude/settings-link.json"
+rm -f "$AGENT_WATCHER_CLAUDE_SETTINGS"
+ln -s "$REAL" "$AGENT_WATCHER_CLAUDE_SETTINGS"
+"$SETUP" install claude >/dev/null; rc=$?
+assert_eq "$rc" 0 "install through a symlink exits 0"
+[ -L "$AGENT_WATCHER_CLAUDE_SETTINGS" ] && ok || ko "install replaced the symlink with a regular file"
+assert_eq "$(jq -r '[.hooks[][]?.hooks[]?.command // "" | select(contains("agent-watcher-hook"))] | length' "$REAL")" 7 "hooks land in the real file behind the symlink"
+assert_eq "$(jq -r .model "$REAL")" opus "unrelated keys in the real file preserved"
+assert_eq "$(stat -c %a "$REAL")" 600 "the real file keeps its mode"
+assert_file "$REAL.agent-watcher.bak" "backup written next to the real file"
+assert_eq "$("$SETUP" status claude)" "claude installed" "status through the symlink"
+"$SETUP" remove claude >/dev/null; rc=$?
+assert_eq "$rc" 0 "remove through a symlink exits 0"
+[ -L "$AGENT_WATCHER_CLAUDE_SETTINGS" ] && ok || ko "remove replaced the symlink with a regular file"
+assert_eq "$(grep -c agent-watcher-hook "$REAL")" 0 "remove strips our hooks from the real file"
+assert_eq "$(stat -c %a "$REAL")" 600 "the real file keeps its mode after remove"
+
 echo
 echo "hook tests: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
