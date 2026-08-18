@@ -98,6 +98,20 @@ assert_eq "$(field "$F" .cwd)" /tmp/proj "missing cwd keeps the previous one"
 run_agent claude session-end '{"session_id":"s1","cwd":"/tmp/proj"}' >/dev/null
 assert_nofile "$F" "session-end removes the file"
 
+echo "== hook: an agent whose own cmdline mentions agent-watcher"
+# Only our own wrapper (bin/agent-watcher-hook) may be skipped during the PPID
+# walk. A real agent that merely carries "agent-watcher" in its argv -- e.g. a
+# prompt about this very plugin -- must still be recognised as the agent.
+reset_logs
+rm -f "$TMP/agent.pid"
+printf '%s' '{"session_id":"aw1","cwd":"/tmp/proj"}' |
+  "$TMP/bin/claude" prompt "touch /tmp/agent-watcher-perm-test" >/dev/null
+WRAPPER_PID=$(cat "$TMP/agent.pid" 2>/dev/null)
+FAW="$AGENT_WATCHER_STATE_DIR/claude-aw1.json"
+[ -n "$WRAPPER_PID" ] && ok || ko "fake claude wrapper pid was not recorded"
+assert_eq "$(field "$FAW" .agentPid)" "$WRAPPER_PID" \
+  "agent whose argv mentions agent-watcher is still resolved as the agent"
+
 echo "== hook: other agents and edge cases"
 reset_logs
 run_agent codex prompt '{"session_id":"c1","cwd":"/tmp/x"}' >/dev/null

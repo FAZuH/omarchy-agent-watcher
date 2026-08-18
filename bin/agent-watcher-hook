@@ -32,7 +32,8 @@ alive() { # alive <pid> <agent>: process exists and still looks like that agent
 }
 
 # Walk the parent chain. Sets AGENT_PID (first ancestor whose cmdline matches
-# the agent, skipping our own wrappers) and, when need_window=1,
+# the agent, skipping only this script itself -- an agent may well carry
+# "agent-watcher" in its argv, e.g. a prompt about this plugin) and, when need_window=1,
 # WINDOW_ADDRESS (first ancestor that owns a Hyprland client, bare hex).
 resolve_ancestry() { # resolve_ancestry <agent> <need_window:0|1>
   local agent="$1" need_window="$2" pid=$$ pattern clients="" cmd
@@ -44,7 +45,7 @@ resolve_ancestry() { # resolve_ancestry <agent> <need_window:0|1>
   fi
   while [ -n "$pid" ] && [ "$pid" -gt 1 ] 2>/dev/null; do
     cmd=$(cmdline_of "$pid")
-    if [ "$AGENT_PID" = 0 ] && [ "${cmd#*agent-watcher}" = "$cmd" ] && printf '%s' "$cmd" | grep -Eq "$pattern"; then
+    if [ "$AGENT_PID" = 0 ] && [ "${cmd#*agent-watcher-hook}" = "$cmd" ] && printf '%s' "$cmd" | grep -Eq "$pattern"; then
       AGENT_PID=$pid
     fi
     if [ -n "$clients" ] && [ -z "$WINDOW_ADDRESS" ]; then
