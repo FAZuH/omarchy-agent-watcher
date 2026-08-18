@@ -507,7 +507,7 @@ Panel {
           leftPadding: Style.space(8)
           rightPadding: Style.space(8)
           wrapMode: Text.WordWrap
-          text: "Click a session to focus its window · Middle-click the pill to refresh · Hooks apply to newly started agents"
+          text: "Click a session to focus its window · Middle-click the pill to refresh · Remove hooks here before uninstalling the plugin"
           color: root.mutedForeground
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption

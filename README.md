@@ -40,6 +40,10 @@ entries pointing at `agent-watcher-hook` are ever added or removed, and
 ~/.config/omarchy/plugins/io.github.5d0tal1gat0r.agent-watcher/bin/agent-watcher-setup remove claude
 ```
 
+**Before removing the plugin**, click **Remove** for each agent (or run
+`agent-watcher-setup remove <agent>`); the hooks are absolute paths into the
+plugin directory and would otherwise fail on every agent turn.
+
 ## Usage
 
 | where | action | effect |
