@@ -223,6 +223,37 @@ assert_nofile "$AGENT_WATCHER_STATE_DIR/opencode-nope.json" "rename never create
 run_agent claude session-start '{"session_id":"t2","cwd":"/tmp/x"}' >/dev/null
 assert_eq "$(field "$AGENT_WATCHER_STATE_DIR/claude-t2.json" .title)" "" "agents without titles store an empty title"
 
+echo "== hook: dump prunes orphaned agents whose window is gone"
+reset_logs
+mkdir -p "$AGENT_WATCHER_STATE_DIR"
+# Three orphaned fake agents (parent exits immediately -> re-parented to init/systemd).
+bash -c '( exec -a claude sleep 60 & )'; bash -c '( exec -a codex sleep 60 & )'; bash -c '( exec -a gemini sleep 60 & )'
+sleep 0.4
+O1=$(pgrep -f '^claude 60$' | head -1); O2=$(pgrep -f '^codex 60$' | head -1); O3=$(pgrep -f '^gemini 60$' | head -1)
+if [ -n "$O1" ] && [ -n "$O2" ] && [ -n "$O3" ]; then
+  ppid=$(awk '/^PPid:/ { print $2 }' /proc/$O1/status); pcomm=$(cat /proc/$ppid/comm 2>/dev/null)
+  if [ "$ppid" -le 1 ] || [ "$pcomm" = systemd ]; then
+    printf '{"agent":"claude","sessionId":"orph","state":"done","cwd":"/o","agentPid":%s,"windowAddress":"deadbeef","updatedAt":1,"lastEvent":"done"}' "$O1" > "$AGENT_WATCHER_STATE_DIR/claude-orph.json"
+    printf '{"agent":"codex","sessionId":"orphwin","state":"idle","cwd":"/o","agentPid":%s,"windowAddress":"abc123","updatedAt":1,"lastEvent":"done"}' "$O2" > "$AGENT_WATCHER_STATE_DIR/codex-orphwin.json"
+    printf '{"agent":"gemini","sessionId":"orphnowin","state":"idle","cwd":"/o","agentPid":%s,"windowAddress":"","updatedAt":1,"lastEvent":"done"}' "$O3" > "$AGENT_WATCHER_STATE_DIR/gemini-orphnowin.json"
+    dump=$("$HOOK" dump)
+    assert_nofile "$AGENT_WATCHER_STATE_DIR/claude-orph.json" "orphaned agent whose window vanished is pruned"
+    assert_file "$AGENT_WATCHER_STATE_DIR/codex-orphwin.json" "orphaned agent whose window still exists is kept"
+    assert_file "$AGENT_WATCHER_STATE_DIR/gemini-orphnowin.json" "orphaned agent that never had a window (tmux/nohup) is kept"
+    assert_eq "$(printf '%s' "$dump" | jq -r 'map(.sessionId) | sort | join(",")')" "orphnowin,orphwin" "dump lists only the survivors"
+    assert_eq "$(hyprctl_calls)" 1 "window list fetched once per dump"
+    # With no compositor answer, nothing is pruned on the window rule.
+    printf '{"agent":"claude","sessionId":"orph2","state":"done","cwd":"/o","agentPid":%s,"windowAddress":"deadbeef","updatedAt":1,"lastEvent":"done"}' "$O1" > "$AGENT_WATCHER_STATE_DIR/claude-orph2.json"
+    HYPRCTL_STUB_EMPTY=1 "$HOOK" dump >/dev/null
+    assert_file "$AGENT_WATCHER_STATE_DIR/claude-orph2.json" "no window list -> orphan kept (fail safe)"
+  else
+    echo "(skipped orphan tests: orphans re-parent to $pcomm here)"
+  fi
+  kill "$O1" "$O2" "$O3" 2>/dev/null; wait 2>/dev/null
+else
+  echo "(skipped orphan tests: could not spawn orphans)"
+fi
+
 echo "== hook: agent-internal helper sessions are ignored"
 reset_logs
 mkdir -p "$AGENT_WATCHER_STATE_DIR"

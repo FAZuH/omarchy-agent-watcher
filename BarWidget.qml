@@ -155,6 +155,21 @@ BarWidget {
     function onActiveToplevelChanged() { root.acknowledgeFocused() }
   }
 
+  // A window came or went (a terminal was closed): re-check right away so an
+  // agent that outlived its terminal disappears within a second, not at the
+  // next 15 s prune. Debounced: closing a window fires several model updates.
+  Connections {
+    target: Hyprland.toplevels
+    function onValuesChanged() { windowChangeDebounce.restart() }
+  }
+
+  Timer {
+    id: windowChangeDebounce
+    interval: 700
+    repeat: false
+    onTriggered: root.requestDump()
+  }
+
   Process {
     id: dumpProc
     command: [root.hookScript, "dump"]

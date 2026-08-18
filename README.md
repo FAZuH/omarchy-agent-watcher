@@ -83,8 +83,9 @@ Each agent's native hook calls `bin/agent-watcher-hook`, which writes a tiny
 JSON file per session under `$XDG_RUNTIME_DIR/omarchy-agent-watcher/` and pings
 the shell. The hook finds its own terminal window by walking up the process
 tree, so the panel knows the workspace and can focus it; the shell reads live
-window titles and focus from Hyprland. Sessions vanish on `SessionEnd` or when
-their process is gone (checked every 15 s). Nothing leaves your machine.
+window titles and focus from Hyprland. Sessions vanish on `SessionEnd`, when
+their process is gone, or when their terminal window is closed (re-checked
+whenever a window appears or disappears, and every 15 s). Nothing leaves your machine.
 
 Hyprland ≥ 0.56 dispatches through a Lua API, so the plugin sends both the Lua
 (`hl.dsp.focus{window=…}`) and the classic (`focuswindow`) form when focusing
@@ -96,7 +97,9 @@ a window — click-to-focus works on both generations.
 - A shell restart resets the "seen" memory, so unacknowledged sessions blink
   again even if you'd already looked at them.
 - Sessions without a Hyprland window (tmux/screen, SSH) appear under
-  **Other**, without click-to-focus.
+  **Other**, without click-to-focus. An agent that outlives its closed
+  terminal (OpenCode ignores the hangup) is dropped from the list within a
+  second — the process itself keeps running until you kill it.
 - Sub-agent sessions (Claude Code subagents, OpenCode child sessions) and
   Claude Code's own background plumbing (the `claude daemon` and the
   `bg-pty-host` sessions it pre-spawns) are intentionally not listed — only

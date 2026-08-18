@@ -84,12 +84,39 @@ ping_shell() {
   OMARCHY_PATH="${OMARCHY_PATH:-/usr/share/omarchy}" "$cli" -q "$PLUGIN_ID" refresh >/dev/null 2>&1 || true
 }
 
+# True when the process was re-parented to init / the systemd user manager:
+# its terminal (and the shell in it) is gone. Agents that ignore SIGHUP —
+# OpenCode does — linger this way after their window is closed.
+orphaned() { # orphaned <pid>
+  local ppid comm
+  ppid=$(awk '/^PPid:/ { print $2 }' "/proc/$1/status" 2>/dev/null)
+  [ -n "$ppid" ] || return 1
+  [ "$ppid" -le 1 ] 2>/dev/null && return 0
+  comm=$(cat "/proc/$ppid/comm" 2>/dev/null)
+  [ "$comm" = systemd ]
+}
+
+# Bare-hex addresses of the Hyprland windows that currently exist, one per
+# line; fetched lazily (once per dump) and only when a session needs it.
+WINDOWS_FETCHED=0
+WINDOWS=""
+window_exists() { # window_exists <bare-hex-address>
+  if [ "$WINDOWS_FETCHED" = 0 ]; then
+    WINDOWS_FETCHED=1
+    WINDOWS=$(hyprctl clients -j 2>/dev/null | jq -r '.[].address' 2>/dev/null | sed 's/^0x//' | tr 'A-F' 'a-f')
+    # No compositor answer: assume windows still exist rather than prune.
+    [ -n "$WINDOWS" ] || WINDOWS="?"
+  fi
+  [ "$WINDOWS" = "?" ] && return 0
+  printf '%s\n' "$WINDOWS" | grep -qx "$1"
+}
+
 dump() {
   # No jq means we cannot tell a broken state file from a good one, so prune
   # nothing: deleting every session here would lose live sessions for good.
   command -v jq >/dev/null 2>&1 || { printf '[]\n'; return 0; }
   mkdir -p "$STATE_DIR" 2>/dev/null
-  local f agent pid out
+  local f agent pid win out
   local files=()
   for f in "$STATE_DIR"/*.json; do
     [ -e "$f" ] || continue
@@ -103,6 +130,14 @@ dump() {
     fi
     pid=$(jq -r '.agentPid // 0' "$f" 2>/dev/null)
     if [ "${pid:-0}" -gt 0 ] 2>/dev/null && ! alive "$pid" "$agent"; then rm -f "$f"; continue; fi
+    # Alive but orphaned, and the window it was started in is gone: the user
+    # closed the terminal and the agent survived the hangup. Not a session
+    # anyone can reach any more; drop it. (A tmux/nohup session that never
+    # had a window keeps its empty address and is left alone.)
+    win=$(jq -r '.windowAddress // ""' "$f" 2>/dev/null)
+    if [ "${pid:-0}" -gt 0 ] 2>/dev/null && [ -n "$win" ] && orphaned "$pid" && ! window_exists "$win"; then
+      rm -f "$f"; continue
+    fi
     files+=("$f")
   done
   if [ "${#files[@]}" -eq 0 ]; then printf '[]\n'; return 0; fi
