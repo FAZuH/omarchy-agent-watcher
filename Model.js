@@ -134,6 +134,132 @@ function pathFromUrl(url) {
   try { return decodeURIComponent(s) } catch (e) { return s }
 }
 
+function isSameEvent(prev, next) {
+  return !!prev && prev.updatedAt === next.updatedAt && prev.state === next.state && prev.lastEvent === next.lastEvent
+}
+
+function copySession(s) {
+  var out = {}
+  for (var k in s) out[k] = s[k]
+  return out
+}
+
+// Merge a fresh snapshot into the previous session map. `seen` and
+// `stateSince` are shell-side only, so they carry over from `prev` unless the
+// file shows a new event. A new done/waiting event whose window is the active
+// toplevel is born seen (the user was watching); working/idle never blink.
+function mergeSessions(prevMap, snapshot, activeAddress, nowSec) {
+  var prev = prevMap || {}
+  var active = normalizeAddress(activeAddress)
+  var out = {}
+  for (var i = 0; i < snapshot.length; i++) {
+    var s = snapshot[i]
+    var old = prev[s.key]
+    var next = copySession(s)
+    if (isSameEvent(old, s)) {
+      next.seen = old.seen
+      next.stateSince = old.stateSince
+    } else {
+      var focused = s.windowAddress !== "" && s.windowAddress === active
+      next.seen = focused || s.state === "working" || s.state === "idle"
+      next.stateSince = old && old.state === s.state ? old.stateSince : (s.updatedAt || nowSec || 0)
+    }
+    out[s.key] = next
+  }
+  return out
+}
+
+// The window with `activeAddress` just got focus: its sessions are seen.
+function markSeen(map, activeAddress) {
+  var active = normalizeAddress(activeAddress)
+  var out = {}
+  for (var key in map) {
+    var s = map[key]
+    if (active !== "" && s.windowAddress === active && !s.seen) {
+      var copy = copySession(s)
+      copy.seen = true
+      out[key] = copy
+    } else {
+      out[key] = s
+    }
+  }
+  return out
+}
+
+function sessionList(map) {
+  var out = []
+  for (var key in map) out.push(map[key])
+  return out
+}
+
+function displayState(session) {
+  return session.state === "done" && session.seen ? "idle" : session.state
+}
+
+function needsAttention(session, settings) {
+  var opts = settings || {}
+  if (session.seen) return false
+  if (session.state === "done") return boolSetting(opts.blinkOnDone, true)
+  if (session.state === "waiting") return boolSetting(opts.blinkOnWaiting, true)
+  return false
+}
+
+function barSummary(list, settings) {
+  var working = 0, waiting = 0, done = 0
+  for (var i = 0; i < list.length; i++) {
+    var s = list[i]
+    if (s.state === "working") working++
+    if (needsAttention(s, settings)) {
+      if (s.state === "waiting") waiting++
+      else done++
+    }
+  }
+  var attention = waiting + done
+  return {
+    total: list.length,
+    working: working,
+    waiting: waiting,
+    done: done,
+    attention: attention,
+    level: waiting > 0 ? "waiting" : (done > 0 ? "done" : "none"),
+    blink: attention > 0
+  }
+}
+
+// Pieces of the pill text, pre-spaced so the colored overlay Row in
+// BarWidget.qml and the sizing label agree exactly: "󱚣 2 · 1".
+function barParts(summary) {
+  var s = summary || { working: 0, attention: 0 }
+  return {
+    icon: BAR_ICON,
+    working: s.working > 0 ? " " + s.working : "",
+    dot: s.working > 0 && s.attention > 0 ? " ·" : "",
+    attention: s.attention > 0 ? " " + s.attention : ""
+  }
+}
+
+function barLabel(summary) {
+  var p = barParts(summary)
+  return p.icon + p.working + p.dot + p.attention
+}
+
+function verticalLabel(summary) {
+  var s = summary || { working: 0, attention: 0 }
+  var lines = [BAR_ICON]
+  if (s.working > 0) lines.push(String(s.working))
+  if (s.attention > 0) lines.push(String(s.attention))
+  return lines.join("\n")
+}
+
+function summaryLine(summary) {
+  if (!summary || summary.total === 0) return "No sessions"
+  var bits = [summary.total + (summary.total === 1 ? " session" : " sessions")]
+  if (summary.working > 0) bits.push(summary.working + " working")
+  if (summary.waiting > 0) bits.push(summary.waiting + " waiting")
+  if (summary.done > 0) bits.push(summary.done + " done")
+  return bits.join(" · ")
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     AGENTS: AGENTS,
@@ -152,6 +278,16 @@ if (typeof module !== "undefined") {
     formatElapsed: formatElapsed,
     normalizeColor: normalizeColor,
     parseThemeColor: parseThemeColor,
-    pathFromUrl: pathFromUrl
+    pathFromUrl: pathFromUrl,
+    mergeSessions: mergeSessions,
+    markSeen: markSeen,
+    sessionList: sessionList,
+    displayState: displayState,
+    needsAttention: needsAttention,
+    barSummary: barSummary,
+    barParts: barParts,
+    barLabel: barLabel,
+    verticalLabel: verticalLabel,
+    summaryLine: summaryLine
   }
 }

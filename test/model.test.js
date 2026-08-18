@@ -115,3 +115,112 @@ test("pathFromUrl: file URL to a plain decoded path", () => {
   assert.equal(Model.pathFromUrl("/already/a/path"), "/already/a/path")
   assert.equal(Model.pathFromUrl(""), "")
 })
+
+// ---- Task 3: merge / seen / attention / summary
+
+function snap(list) { return Model.parseSnapshot(JSON.stringify(list)) }
+const F = (over) => Object.assign({ agent: "claude", sessionId: "s1", state: "done", cwd: "/p", agentPid: 10, windowAddress: "aaa", updatedAt: 100, lastEvent: "done" }, over)
+
+test("mergeSessions: done/waiting born unseen unless the window is focused; working/idle are always seen", () => {
+  const m1 = Model.mergeSessions({}, snap([F({ state: "done" })]), "bbb", 100)
+  assert.equal(m1["claude-s1"].seen, false)
+  const m2 = Model.mergeSessions({}, snap([F({ state: "done" })]), "0xAAA", 100)
+  assert.equal(m2["claude-s1"].seen, true)
+  const m3 = Model.mergeSessions({}, snap([F({ state: "waiting" })]), "bbb", 100)
+  assert.equal(m3["claude-s1"].seen, false)
+  const m4 = Model.mergeSessions({}, snap([F({ state: "working" })]), "", 100)
+  assert.equal(m4["claude-s1"].seen, true)
+  const m5 = Model.mergeSessions({}, snap([F({ state: "idle", windowAddress: "" })]), "", 100)
+  assert.equal(m5["claude-s1"].seen, true)
+})
+
+test("mergeSessions: unchanged event keeps seen and stateSince; new event recomputes seen", () => {
+  let m = Model.mergeSessions({}, snap([F({ state: "done", updatedAt: 100 })]), "bbb", 100)
+  m = Model.markSeen(m, "aaa")
+  assert.equal(m["claude-s1"].seen, true)
+  const same = Model.mergeSessions(m, snap([F({ state: "done", updatedAt: 100 })]), "bbb", 200)
+  assert.equal(same["claude-s1"].seen, true)
+  assert.equal(same["claude-s1"].stateSince, 100)
+  const again = Model.mergeSessions(m, snap([F({ state: "done", updatedAt: 150 })]), "bbb", 200)
+  assert.equal(again["claude-s1"].seen, false)
+})
+
+test("mergeSessions: stateSince follows state changes, not every event", () => {
+  let m = Model.mergeSessions({}, snap([F({ state: "working", lastEvent: "prompt", updatedAt: 100 })]), "", 100)
+  assert.equal(m["claude-s1"].stateSince, 100)
+  m = Model.mergeSessions(m, snap([F({ state: "working", lastEvent: "prompt", updatedAt: 130 })]), "", 130)
+  assert.equal(m["claude-s1"].stateSince, 100, "same state keeps the original start")
+  m = Model.mergeSessions(m, snap([F({ state: "done", lastEvent: "done", updatedAt: 160 })]), "", 160)
+  assert.equal(m["claude-s1"].stateSince, 160)
+  const noStamp = Model.mergeSessions({}, snap([F({ updatedAt: 0 })]), "", 777)
+  assert.equal(noStamp["claude-s1"].stateSince, 777, "missing updatedAt falls back to now")
+})
+
+test("mergeSessions: sessions missing from the snapshot are dropped", () => {
+  let m = Model.mergeSessions({}, snap([F({ sessionId: "a" }), F({ sessionId: "b" })]), "", 1)
+  assert.deepEqual(Object.keys(m).sort(), ["claude-a", "claude-b"])
+  m = Model.mergeSessions(m, snap([F({ sessionId: "b" })]), "", 2)
+  assert.deepEqual(Object.keys(m), ["claude-b"])
+})
+
+test("markSeen: only sessions on the focused window flip; others untouched", () => {
+  const m = Model.mergeSessions({}, snap([F({ sessionId: "a", windowAddress: "aaa" }), F({ sessionId: "b", windowAddress: "bbb" })]), "", 1)
+  const after = Model.markSeen(m, "0xAAA")
+  assert.equal(after["claude-a"].seen, true)
+  assert.equal(after["claude-b"].seen, false)
+  assert.equal(Model.markSeen(m, "")["claude-a"].seen, false)
+})
+
+test("displayState: a seen done reads as idle, everything else as-is", () => {
+  assert.equal(Model.displayState({ state: "done", seen: true }), "idle")
+  assert.equal(Model.displayState({ state: "done", seen: false }), "done")
+  assert.equal(Model.displayState({ state: "waiting", seen: true }), "waiting")
+  assert.equal(Model.displayState({ state: "working", seen: true }), "working")
+})
+
+test("needsAttention: unseen done/waiting, gated by the blink settings", () => {
+  const on = { blinkOnDone: true, blinkOnWaiting: true }
+  assert.equal(Model.needsAttention({ state: "done", seen: false }, on), true)
+  assert.equal(Model.needsAttention({ state: "waiting", seen: false }, on), true)
+  assert.equal(Model.needsAttention({ state: "done", seen: true }, on), false)
+  assert.equal(Model.needsAttention({ state: "working", seen: false }, on), false)
+  assert.equal(Model.needsAttention({ state: "done", seen: false }, { blinkOnDone: false, blinkOnWaiting: true }), false)
+  assert.equal(Model.needsAttention({ state: "waiting", seen: false }, { blinkOnDone: true, blinkOnWaiting: "false" }), false)
+  assert.equal(Model.needsAttention({ state: "done", seen: false }, {}), true, "defaults are on")
+})
+
+test("barSummary: counts, level priority (waiting beats done) and blink", () => {
+  const list = [
+    { state: "working", seen: true }, { state: "working", seen: true },
+    { state: "done", seen: false }, { state: "done", seen: true },
+    { state: "waiting", seen: false }, { state: "idle", seen: true }
+  ]
+  const s = Model.barSummary(list, {})
+  assert.deepEqual(s, { total: 6, working: 2, waiting: 1, done: 1, attention: 2, level: "waiting", blink: true })
+  const d = Model.barSummary([{ state: "done", seen: false }], {})
+  assert.equal(d.level, "done")
+  const none = Model.barSummary([{ state: "working", seen: true }], {})
+  assert.deepEqual([none.level, none.blink, none.attention], ["none", false, 0])
+  assert.equal(Model.barSummary([{ state: "waiting", seen: false }], { blinkOnWaiting: false }).attention, 0)
+})
+
+test("barParts/barLabel/verticalLabel: icon, working, dot, attention", () => {
+  const both = Model.barSummary([{ state: "working", seen: true }, { state: "working", seen: true }, { state: "done", seen: false }], {})
+  assert.deepEqual(Model.barParts(both), { icon: Model.BAR_ICON, working: " 2", dot: " ·", attention: " 1" })
+  assert.equal(Model.barLabel(both), Model.BAR_ICON + " 2 · 1")
+  const onlyWork = Model.barSummary([{ state: "working", seen: true }], {})
+  assert.equal(Model.barLabel(onlyWork), Model.BAR_ICON + " 1")
+  const onlyAttn = Model.barSummary([{ state: "waiting", seen: false }], {})
+  assert.equal(Model.barLabel(onlyAttn), Model.BAR_ICON + " 1")
+  assert.deepEqual(Model.barParts(onlyAttn), { icon: Model.BAR_ICON, working: "", dot: "", attention: " 1" })
+  assert.equal(Model.barLabel(Model.barSummary([], {})), Model.BAR_ICON)
+  assert.equal(Model.verticalLabel(both), Model.BAR_ICON + "\n2\n1")
+  assert.equal(Model.verticalLabel(Model.barSummary([], {})), Model.BAR_ICON)
+})
+
+test("summaryLine: human header line", () => {
+  assert.equal(Model.summaryLine(Model.barSummary([], {})), "No sessions")
+  assert.equal(Model.summaryLine(Model.barSummary([{ state: "idle", seen: true }], {})), "1 session")
+  const s = Model.barSummary([{ state: "working", seen: true }, { state: "waiting", seen: false }, { state: "done", seen: false }], {})
+  assert.equal(Model.summaryLine(s), "3 sessions · 1 working · 1 waiting · 1 done")
+})
