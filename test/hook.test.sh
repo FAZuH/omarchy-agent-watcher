@@ -200,6 +200,29 @@ else
 fi
 rm -rf "$AGENT_WATCHER_STATE_DIR"
 
+echo "== hook: session titles and rename"
+reset_logs
+run_agent opencode session-start '{"session_id":"t1","cwd":"/tmp/x","title":"New session"}' >/dev/null
+T="$AGENT_WATCHER_STATE_DIR/opencode-t1.json"
+assert_eq "$(field "$T" .title)" "New session" "title stored from the payload"
+run_agent opencode prompt '{"session_id":"t1","cwd":"/tmp/x"}' >/dev/null
+assert_eq "$(field "$T" .title)" "New session" "title kept when a later payload omits it"
+before_state=$(field "$T" .state); before_ts=$(field "$T" .updatedAt); before_ev=$(field "$T" .lastEvent); pings=$(shell_pings)
+sleep 1.1
+run_agent opencode rename '{"session_id":"t1","cwd":"/tmp/x","title":"Fix the login bug"}' >/dev/null
+assert_eq "$(field "$T" .title)" "Fix the login bug" "rename updates the title"
+assert_eq "$(field "$T" .state)" "$before_state" "rename keeps the state"
+assert_eq "$(field "$T" .updatedAt)" "$before_ts" "rename keeps updatedAt (no blink re-arm)"
+assert_eq "$(field "$T" .lastEvent)" "$before_ev" "rename keeps lastEvent"
+assert_eq "$(shell_pings)" $((pings+1)) "rename pings the shell"
+pings=$(shell_pings)
+run_agent opencode rename '{"session_id":"t1","cwd":"/tmp/x","title":"Fix the login bug"}' >/dev/null
+assert_eq "$(shell_pings)" "$pings" "unchanged title is a no-op"
+run_agent opencode rename '{"session_id":"nope","cwd":"/tmp/x","title":"Ghost"}' >/dev/null
+assert_nofile "$AGENT_WATCHER_STATE_DIR/opencode-nope.json" "rename never creates a session"
+run_agent claude session-start '{"session_id":"t2","cwd":"/tmp/x"}' >/dev/null
+assert_eq "$(field "$AGENT_WATCHER_STATE_DIR/claude-t2.json" .title)" "" "agents without titles store an empty title"
+
 echo "== hook: agent-internal helper sessions are ignored"
 reset_logs
 mkdir -p "$AGENT_WATCHER_STATE_DIR"

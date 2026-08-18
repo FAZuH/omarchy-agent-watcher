@@ -126,11 +126,14 @@ Panel {
     return root.mutedForeground
   }
 
-  function titleFor(session) {
+  // Live window title of a session (Claude Code writes its task summary there).
+  function windowTitleFor(session) {
     var win = session.windowAddress !== "" ? root.lookup[session.windowAddress] : null
-    var title = win ? Model.cleanTitle(win.title) : ""
-    return title !== "" ? title : session.cwd
+    return win ? win.title : ""
   }
+
+  function labelFor(session) { return Model.sessionLabel(session, windowTitleFor(session), Color.home) }
+  function subtitleFor(session) { return Model.sessionSubtitle(session, Color.home) }
 
   function focusRow(session) {
     if (root.host) root.host.focusSession(session)
@@ -451,7 +454,7 @@ Panel {
 
                     Text {
                       anchors.verticalCenter: parent.verticalCenter
-                      text: Model.projectName(row.modelData.cwd)
+                      text: root.labelFor(row.modelData)
                       color: root.barForeground
                       font.family: root.fontFamily
                       font.pixelSize: Style.font.subtitle
@@ -474,7 +477,7 @@ Panel {
 
                   Text {
                     width: parent.width
-                    text: root.titleFor(row.modelData)
+                    text: root.subtitleFor(row.modelData)
                     color: root.dimForeground
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption

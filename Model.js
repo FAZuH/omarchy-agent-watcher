@@ -88,6 +88,7 @@ function normalizeSession(raw) {
     windowAddress: normalizeAddress(raw.windowAddress),
     updatedAt: Math.max(0, toInt(raw.updatedAt, 0)),
     lastEvent: trimString(raw.lastEvent),
+    title: trimString(raw.title),
     seen: false,
     stateSince: 0
   }
@@ -124,6 +125,50 @@ function projectName(cwd) {
 // spinner ◐◓◑◒, ✳, ✶ …). Keep the human part.
 function cleanTitle(title) {
   return trimString(String(title === undefined || title === null ? "" : title).replace(/^[^A-Za-z0-9~\/._"'`(\[{<$@]+/, ""))
+}
+
+// "/home/u/dev/api" -> "~/dev/api" when `home` is that prefix.
+function collapseHome(path, home) {
+  var p = trimString(path)
+  var h = trimString(home).replace(/\/+$/, "")
+  if (h === "" || p === "") return p
+  if (p === h) return "~"
+  if (p.indexOf(h + "/") === 0) return "~" + p.slice(h.length)
+  return p
+}
+
+// Window titles that carry no session information: the agent's own name, a
+// bare terminal name, a shell prompt ("user@host: ~/x") or a plain path.
+var TERMINAL_NAMES = ["foot", "alacritty", "kitty", "ghostty", "wezterm", "wezterm-gui", "terminal", "gnome-terminal", "konsole", "xterm", "bash", "zsh", "fish", "sh"]
+
+function informativeTitle(title, agent) {
+  var t = cleanTitle(title)
+  if (t === "") return ""
+  var lower = t.toLowerCase()
+  if (lower === trimString(agent).toLowerCase() || lower === agentName(agent).toLowerCase()) return ""
+  if (lower.replace(/\s+cli$/, "") === trimString(agent).toLowerCase()) return ""
+  if (TERMINAL_NAMES.indexOf(lower) !== -1) return ""
+  if (/^[^\s@]+@[^\s:]+:/.test(t)) return ""      // user@host: prompt titles
+  if (/^(~|\/)/.test(t)) return ""                   // path-like titles
+  return t
+}
+
+// Primary row label: the agent-supplied session name (OpenCode) beats the
+// live window title (Claude Code writes its task summary there), which beats
+// the project folder.
+function sessionLabel(session, windowTitle, home) {
+  if (session.title && trimString(session.title) !== "") return trimString(session.title)
+  var t = informativeTitle(windowTitle, session.agent)
+  if (t !== "") return t
+  // A session started in $HOME would otherwise be labelled with the username.
+  if (collapseHome(session.cwd, home) === "~") return "~"
+  return projectName(session.cwd)
+}
+
+// Secondary row line: where the session lives, with $HOME shortened.
+function sessionSubtitle(session, home) {
+  var c = collapseHome(session.cwd, home)
+  return c === "" ? "?" : c
 }
 
 function formatElapsed(sinceSec, nowSec) {
@@ -370,6 +415,10 @@ if (typeof module !== "undefined") {
     parseSnapshotResult: parseSnapshotResult,
     parseSnapshot: parseSnapshot,
     projectName: projectName,
+    collapseHome: collapseHome,
+    informativeTitle: informativeTitle,
+    sessionLabel: sessionLabel,
+    sessionSubtitle: sessionSubtitle,
     cleanTitle: cleanTitle,
     formatElapsed: formatElapsed,
     normalizeColor: normalizeColor,

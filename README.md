@@ -57,6 +57,12 @@ plugin directory and would otherwise fail on every agent turn.
 Pill: `󰞮 2 · 1` = 2 sessions working, 1 needs attention. Dimmed icon = no
 sessions. Blink colors come from your theme (`green` / `yellow`).
 
+Each row is named after the session: OpenCode's session title (it renames
+itself after the first exchange), Claude Code's task summary (read from the
+terminal title it sets), otherwise the project folder; the working directory
+sits underneath. Every agent has its own mark and color so rows are easy to
+tell apart at a glance.
+
 IPC (for keybindings): `omarchy-shell io.github.5d0tal1gat0r.agent-watcher toggle|open|close|refresh`
 
 ## Configure

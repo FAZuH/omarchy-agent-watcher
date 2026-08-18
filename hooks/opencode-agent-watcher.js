@@ -15,7 +15,7 @@ const HOOK_TIMEOUT_MS = 5000
 // happened to finish last.
 let queue = Promise.resolve()
 
-function send(event, sessionId, cwd) {
+function send(event, sessionId, cwd, title) {
   queue = queue
     .then(
       () =>
@@ -35,7 +35,7 @@ function send(event, sessionId, cwd) {
             child.on("error", finish)
             child.on("close", finish)
             child.stdin.on("error", () => {})
-            child.stdin.end(JSON.stringify({ session_id: sessionId, cwd: cwd }))
+            child.stdin.end(JSON.stringify({ session_id: sessionId, cwd: cwd, title: title || "" }))
           } catch (e) {
             finish() // never let a watcher failure surface inside the agent
           }
@@ -47,9 +47,11 @@ function send(event, sessionId, cwd) {
 
 export const AgentWatcher = async ({ directory }) => {
   const dirs = new Map() // main session id -> its directory
+  const titles = new Map() // main session id -> its current title
   const children = new Set() // sub-agent sessions (have parentID): ignored
   const busy = new Set() // sessions we have already reported as working
   const cwdOf = (id) => dirs.get(id) || directory
+  const titleOf = (id) => titles.get(id) || ""
   return {
     event: async ({ event }) => {
       const p = (event && event.properties) || {}
@@ -61,7 +63,17 @@ export const AgentWatcher = async ({ directory }) => {
             break
           }
           dirs.set(p.info.id, p.info.directory || directory)
-          send("session-start", p.info.id, cwdOf(p.info.id))
+          titles.set(p.info.id, p.info.title || "")
+          send("session-start", p.info.id, cwdOf(p.info.id), titleOf(p.info.id))
+          break
+        case "session.updated":
+          // OpenCode names sessions after the first exchange ("New session"
+          // becomes a summary); forward the new title without touching state.
+          if (!p.info || children.has(p.info.id)) break
+          if ((p.info.title || "") !== titleOf(p.info.id)) {
+            titles.set(p.info.id, p.info.title || "")
+            send("rename", p.info.id, cwdOf(p.info.id), titleOf(p.info.id))
+          }
           break
         case "session.status":
           if (children.has(p.sessionID)) break
@@ -70,25 +82,26 @@ export const AgentWatcher = async ({ directory }) => {
             // pending permission back to plain working.
             if (busy.has(p.sessionID)) break
             busy.add(p.sessionID)
-            send("prompt", p.sessionID, cwdOf(p.sessionID))
+            send("prompt", p.sessionID, cwdOf(p.sessionID), titleOf(p.sessionID))
           } else {
             busy.delete(p.sessionID)
           }
           break
         case "permission.asked":
-          if (!children.has(p.sessionID)) send("waiting", p.sessionID, cwdOf(p.sessionID))
+          if (!children.has(p.sessionID)) send("waiting", p.sessionID, cwdOf(p.sessionID), titleOf(p.sessionID))
           break
         case "permission.replied":
-          if (!children.has(p.sessionID)) send("tool-done", p.sessionID, cwdOf(p.sessionID))
+          if (!children.has(p.sessionID)) send("tool-done", p.sessionID, cwdOf(p.sessionID), titleOf(p.sessionID))
           break
         case "session.idle":
           busy.delete(p.sessionID)
-          if (!children.has(p.sessionID)) send("done", p.sessionID, cwdOf(p.sessionID))
+          if (!children.has(p.sessionID)) send("done", p.sessionID, cwdOf(p.sessionID), titleOf(p.sessionID))
           break
         case "session.deleted":
           if (p.info && !children.has(p.info.id)) {
             send("session-end", p.info.id, cwdOf(p.info.id))
             dirs.delete(p.info.id)
+            titles.delete(p.info.id)
             busy.delete(p.info.id)
           }
           break

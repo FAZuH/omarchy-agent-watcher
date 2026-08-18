@@ -54,7 +54,7 @@ test("normalizeSession: valid file becomes a session with shell-side defaults", 
   assert.deepEqual(s, {
     key: "claude-abc", agent: "claude", sessionId: "abc", state: "done", cwd: "/home/u/proj",
     agentPid: 4242, windowAddress: "abc", updatedAt: 1755500000, lastEvent: "done",
-    seen: false, stateSince: 0
+    title: "", seen: false, stateSince: 0
   })
 })
 
@@ -101,6 +101,52 @@ test("projectName: basename of cwd with sane fallbacks", () => {
   assert.equal(Model.projectName("/"), "/")
   assert.equal(Model.projectName(""), "?")
   assert.equal(Model.projectName("relative"), "relative")
+})
+
+test("collapseHome: shortens the home prefix only", () => {
+  assert.equal(Model.collapseHome("/home/u/dev/api", "/home/u"), "~/dev/api")
+  assert.equal(Model.collapseHome("/home/u", "/home/u/"), "~")
+  assert.equal(Model.collapseHome("/home/uber/x", "/home/u"), "/home/uber/x")
+  assert.equal(Model.collapseHome("/tmp/x", ""), "/tmp/x")
+  assert.equal(Model.collapseHome("", "/home/u"), "")
+})
+
+test("informativeTitle: rejects agent names, terminal names, prompt and path titles", () => {
+  assert.equal(Model.informativeTitle("◐ Create Omarchy plugin for AI agent session monitoring", "claude"), "Create Omarchy plugin for AI agent session monitoring")
+  assert.equal(Model.informativeTitle("✳ Claude Code", "claude"), "")
+  assert.equal(Model.informativeTitle("claude", "claude"), "")
+  assert.equal(Model.informativeTitle("Gemini CLI", "gemini"), "")
+  assert.equal(Model.informativeTitle("gemini cli", "gemini"), "")
+  assert.equal(Model.informativeTitle("opencode", "opencode"), "")
+  assert.equal(Model.informativeTitle("foot", "codex"), "")
+  assert.equal(Model.informativeTitle("user@host: ~/proj", "codex"), "")
+  assert.equal(Model.informativeTitle("~/proj — bash", "codex"), "")
+  assert.equal(Model.informativeTitle("/usr/bin/zsh", "codex"), "")
+  assert.equal(Model.informativeTitle("Fix the login bug", "codex"), "Fix the login bug")
+  assert.equal(Model.informativeTitle("", "claude"), "")
+})
+
+test("sessionLabel: agent title > informative window title > project name", () => {
+  const oc = { agent: "opencode", cwd: "/home/u", title: "New session" }
+  assert.equal(Model.sessionLabel(oc, "opencode"), "New session")
+  const cl = { agent: "claude", cwd: "/home/u/dev/webapp", title: "" }
+  assert.equal(Model.sessionLabel(cl, "◑ Refactor the auth flow"), "Refactor the auth flow")
+  assert.equal(Model.sessionLabel(cl, "✳ Claude Code"), "webapp")
+  assert.equal(Model.sessionLabel(cl, ""), "webapp")
+  const home = { agent: "codex", cwd: "/home/u", title: "" }
+  assert.equal(Model.sessionLabel(home, "foot", "/home/u"), "~", "sessions in $HOME are labelled ~, not the username")
+  assert.equal(Model.sessionLabel(home, "foot"), "u", "without a home hint the basename is used")
+})
+
+test("sessionSubtitle: home-collapsed cwd, '?' when unknown", () => {
+  assert.equal(Model.sessionSubtitle({ cwd: "/home/u/dev/api" }, "/home/u"), "~/dev/api")
+  assert.equal(Model.sessionSubtitle({ cwd: "/home/u" }, "/home/u"), "~")
+  assert.equal(Model.sessionSubtitle({ cwd: "" }, "/home/u"), "?")
+})
+
+test("normalizeSession: keeps the optional title", () => {
+  assert.equal(Model.normalizeSession({ agent: "opencode", sessionId: "a", state: "idle", title: " New session " }).title, "New session")
+  assert.equal(Model.normalizeSession({ agent: "opencode", sessionId: "a", state: "idle" }).title, "")
 })
 
 test("cleanTitle: strips leading status glyphs and whitespace, keeps the text", () => {

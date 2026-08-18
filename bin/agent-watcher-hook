@@ -7,6 +7,7 @@
 #
 #   agent: claude | codex | gemini | opencode
 #   event: session-start | prompt | waiting | tool-done | done | session-end
+#          | rename (title-only update; the session must already exist)
 #
 # Silent and always exit 0 on the hook path: agents treat exit codes and
 # stdout as control signals. Set AGENT_WATCHER_DEBUG=1 to keep stderr.
@@ -133,6 +134,7 @@ case "$EVENT" in
   tool-done)     STATE=working ;;
   done)          STATE=done ;;
   session-end)   STATE="" ;;
+  rename)        STATE="" ;;
   *) exit 0 ;;
 esac
 
@@ -140,6 +142,10 @@ INPUT=$(cat 2>/dev/null)
 printf '%s' "$INPUT" | jq -e . >/dev/null 2>&1 || INPUT='{}'
 SESSION_ID=$(printf '%s' "$INPUT" | jq -r '.session_id // .sessionID // .sessionId // empty' 2>/dev/null)
 CWD=$(printf '%s' "$INPUT" | jq -r '.cwd // .directory // empty' 2>/dev/null)
+# Optional session name supplied by the agent (OpenCode sends its session
+# title); other agents leave it empty and the shell falls back to the window
+# title / project name.
+TITLE=$(printf '%s' "$INPUT" | jq -r '.title // empty' 2>/dev/null)
 
 # Gemini fires Notification for more than permissions; only ToolPermission blocks.
 if [ "$AGENT" = gemini ] && [ "$EVENT" = waiting ]; then
@@ -162,10 +168,24 @@ if [ "$EVENT" = session-end ]; then
   exit 0
 fi
 
-PREV_STATE=""; PREV_WINDOW=""; PREV_PID=0; PREV_CWD=""
+PREV_STATE=""; PREV_WINDOW=""; PREV_PID=0; PREV_CWD=""; PREV_TITLE=""
 if [ -f "$FILE" ]; then
-  { read -r PREV_STATE; read -r PREV_WINDOW; read -r PREV_PID; read -r PREV_CWD; } < <(
-    jq -r '(.state // ""), (.windowAddress // ""), ((.agentPid // 0)|tostring), (.cwd // "")' "$FILE" 2>/dev/null)
+  { read -r PREV_STATE; read -r PREV_WINDOW; read -r PREV_PID; read -r PREV_CWD; read -r PREV_TITLE; } < <(
+    jq -r '(.state // ""), (.windowAddress // ""), ((.agentPid // 0)|tostring), (.cwd // ""), (.title // "")' "$FILE" 2>/dev/null)
+fi
+# rename touches only the title: state, timestamps and lastEvent stay put so
+# the shell does not mistake it for new activity (which would re-arm a blink
+# the user already acknowledged). Unknown sessions are ignored.
+if [ "$EVENT" = rename ]; then
+  [ -f "$FILE" ] || exit 0
+  [ "$TITLE" != "$PREV_TITLE" ] || exit 0
+  TMP="$FILE.tmp.$$"
+  if jq --arg title "$TITLE" '.title = $title' "$FILE" > "$TMP" 2>/dev/null; then
+    mv -f "$TMP" "$FILE" 2>/dev/null
+    ping_shell
+  fi
+  rm -f "$TMP" 2>/dev/null
+  exit 0
 fi
 # tool-done only matters while blocked on a permission.
 if [ "$EVENT" = tool-done ] && [ "$PREV_STATE" != waiting ]; then exit 0; fi
@@ -186,15 +206,16 @@ fi
 [ "$AGENT_PID" != 0 ] || AGENT_PID="${PREV_PID:-0}"
 case $AGENT_PID in ''|*[!0-9]*) AGENT_PID=0 ;; esac
 [ -n "$CWD" ] || CWD="$PREV_CWD"
+[ -n "$TITLE" ] || TITLE="$PREV_TITLE"
 
 mkdir -p "$STATE_DIR" 2>/dev/null || exit 0
 NOW=$(date +%s)
 TMP="$FILE.tmp.$$"
 if jq -n --arg agent "$AGENT" --arg sessionId "$SESSION_ID" --arg state "$STATE" --arg cwd "$CWD" \
       --argjson agentPid "${AGENT_PID:-0}" --arg windowAddress "$WINDOW_ADDRESS" \
-      --argjson updatedAt "$NOW" --arg lastEvent "$EVENT" \
+      --argjson updatedAt "$NOW" --arg lastEvent "$EVENT" --arg title "$TITLE" \
       '{agent: $agent, sessionId: $sessionId, state: $state, cwd: $cwd, agentPid: $agentPid,
-        windowAddress: $windowAddress, updatedAt: $updatedAt, lastEvent: $lastEvent}' > "$TMP" 2>/dev/null; then
+        windowAddress: $windowAddress, updatedAt: $updatedAt, lastEvent: $lastEvent, title: $title}' > "$TMP" 2>/dev/null; then
   mv -f "$TMP" "$FILE" 2>/dev/null
 fi
 rm -f "$TMP" 2>/dev/null
