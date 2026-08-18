@@ -108,6 +108,15 @@ Panel {
     for (var k in hookStatus) if (hookStatus[k] === "installed") return true
     return false
   }
+  readonly property int installedHookCount: {
+    var n = 0
+    for (var k in hookStatus) if (hookStatus[k] === "installed") n++
+    return n
+  }
+  // The Hooks section is a disclosure: collapsed by default, opened
+  // automatically the first time we learn that nothing is installed yet.
+  property bool hooksExpanded: false
+  property bool hooksAutoDecided: false
 
   function stateColor(session) {
     var ds = Model.displayState(session)
@@ -175,7 +184,13 @@ Panel {
     id: statusProc
     stdout: StdioCollector {
       waitForEnd: true
-      onStreamFinished: root.hookStatus = Model.parseHookStatus(text)
+      onStreamFinished: {
+        root.hookStatus = Model.parseHookStatus(text)
+        if (!root.hooksAutoDecided) {
+          root.hooksAutoDecided = true
+          root.hooksExpanded = !root.anyHooksInstalled
+        }
+      }
     }
   }
 
@@ -396,26 +411,41 @@ Panel {
                     width: parent.width
                     spacing: Style.space(8)
 
-                    // Agent chip, bordered like the panel's tab buttons.
+                    // Agent chip: the agent's glyph and name in its own color,
+                    // bordered like the panel's tab buttons.
                     Rectangle {
                       id: agentChip
+                      readonly property color agentColor: Model.agentColor(row.modelData.agent, root.accentColor)
                       anchors.verticalCenter: parent.verticalCenter
-                      width: agentTag.implicitWidth + Style.space(10)
+                      width: agentTag.implicitWidth + Style.space(12)
                       height: agentTag.implicitHeight + Style.space(4)
                       radius: Style.cornerRadius
-                      color: "transparent"
+                      color: root.alpha(agentColor, 0.10)
                       border.width: 1
-                      border.color: root.alpha(root.barForeground, 0.28)
+                      border.color: root.alpha(agentColor, 0.55)
 
-                      Text {
+                      Row {
                         id: agentTag
                         anchors.centerIn: parent
-                        text: row.modelData.agent.toUpperCase()
-                        color: root.dimForeground
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.caption
-                        font.bold: true
-                        font.letterSpacing: 0.8
+                        spacing: Style.space(5)
+
+                        Text {
+                          anchors.verticalCenter: parent.verticalCenter
+                          text: Model.agentGlyph(row.modelData.agent)
+                          color: agentChip.agentColor
+                          font.family: root.fontFamily
+                          font.pixelSize: Style.font.bodySmall
+                        }
+
+                        Text {
+                          anchors.verticalCenter: parent.verticalCenter
+                          text: row.modelData.agent.toUpperCase()
+                          color: agentChip.agentColor
+                          font.family: root.fontFamily
+                          font.pixelSize: Style.font.caption
+                          font.bold: true
+                          font.letterSpacing: 0.8
+                        }
                       }
                     }
 
@@ -478,80 +508,146 @@ Panel {
 
         PanelSeparator { foreground: root.barForeground }
 
-        // ---------- Hooks: one switch per agent ----------
-        PanelSectionHeader {
-          leftPadding: Style.space(2)
-          text: "HOOKS"
-          foreground: root.barForeground
-          fontFamily: root.fontFamily
+        // ---------- Hooks: a disclosure with one switch per agent ----------
+        Item {
+          id: hooksHeader
+          width: parent.width
+          height: hooksTitle.implicitHeight + Style.space(8)
+
+          Rectangle {
+            anchors.fill: parent
+            radius: Style.cornerRadius
+            color: hooksHeaderMouse.containsMouse ? Style.hoverFillFor(root.barForeground, root.accentColor) : "transparent"
+          }
+
+          PanelSectionHeader {
+            id: hooksTitle
+            anchors.left: parent.left
+            anchors.leftMargin: Style.space(2)
+            anchors.verticalCenter: parent.verticalCenter
+            text: "HOOKS"
+            foreground: root.barForeground
+            fontFamily: root.fontFamily
+          }
+
+          Text {
+            anchors.right: hooksChevron.left
+            anchors.rightMargin: Style.space(8)
+            anchors.verticalCenter: parent.verticalCenter
+            text: root.hooksAutoDecided ? root.installedHookCount + " / " + Model.AGENTS.length + " installed" : ""
+            color: root.installedHookCount > 0 ? root.doneColor : root.dimForeground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          Text {
+            id: hooksChevron
+            anchors.right: parent.right
+            anchors.rightMargin: Style.space(8)
+            anchors.verticalCenter: parent.verticalCenter
+            text: root.hooksExpanded ? "\uf077" : "\uf078"
+            color: hooksHeaderMouse.containsMouse ? root.barForeground : root.dimForeground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          MouseArea {
+            id: hooksHeaderMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.hooksExpanded = !root.hooksExpanded
+          }
         }
 
-        Repeater {
-          model: Model.AGENTS
+        Column {
+          id: hooksBody
+          visible: root.hooksExpanded
+          width: parent.width
+          spacing: Style.space(10)
 
-          Item {
-            id: hookRow
-            required property var modelData
-            readonly property string status: root.hookStatus[modelData.id] || ""
-            readonly property bool installed: status === "installed"
-            readonly property bool missing: status === "agent-missing"
-            readonly property bool busy: root.busyAgent === modelData.id
-            readonly property bool failed: root.setupFailedAgent === modelData.id
-            readonly property string caption: failed
-              ? root.setupFailedText
-              : (busy ? "working…"
-                : (Model.hookStatusLabel(status)
-                  + (installed && modelData.id === "codex" ? "  ·  run /hooks in Codex once to trust" : "")))
-            width: content.width
-            height: hookLabels.implicitHeight + Style.space(12)
+          Repeater {
+            model: Model.AGENTS
 
-            Rectangle {
-              anchors.fill: parent
-              radius: Style.cornerRadius
-              color: root.alpha(root.barForeground, 0.04)
-            }
+            Item {
+              id: hookRow
+              required property var modelData
+              readonly property string status: root.hookStatus[modelData.id] || ""
+              readonly property bool installed: status === "installed"
+              readonly property bool missing: status === "agent-missing"
+              readonly property bool busy: root.busyAgent === modelData.id
+              readonly property bool failed: root.setupFailedAgent === modelData.id
+              readonly property color agentColor: Model.agentColor(modelData.id, root.accentColor)
+              readonly property string caption: failed
+                ? root.setupFailedText
+                : (busy ? "working…"
+                  : (Model.hookStatusLabel(status)
+                    + (installed && modelData.id === "codex" ? "  ·  run /hooks in Codex once to trust" : "")))
+              width: content.width
+              height: hookLabels.implicitHeight + Style.space(12)
 
-            Column {
-              id: hookLabels
-              anchors.left: parent.left
-              anchors.leftMargin: Style.space(12)
-              anchors.right: hookSwitch.left
-              anchors.rightMargin: Style.space(12)
-              anchors.verticalCenter: parent.verticalCenter
-              spacing: Style.space(2)
-
-              Text {
-                width: parent.width
-                text: hookRow.modelData.name
-                color: hookRow.missing ? root.dimForeground : root.barForeground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.body
-                font.bold: true
-                elide: Text.ElideRight
+              Rectangle {
+                anchors.fill: parent
+                radius: Style.cornerRadius
+                color: root.alpha(root.barForeground, 0.04)
               }
 
+              // Agent mark in its own color, dimmed when the agent is not installed.
               Text {
-                width: parent.width
-                text: hookRow.caption
-                color: hookRow.failed ? root.urgentForeground : (hookRow.installed ? root.doneColor : root.dimForeground)
+                id: hookGlyph
+                anchors.left: parent.left
+                anchors.leftMargin: Style.space(12)
+                anchors.verticalCenter: parent.verticalCenter
+                text: Model.agentGlyph(hookRow.modelData.id)
+                color: hookRow.missing ? root.dimForeground : hookRow.agentColor
                 font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                elide: Text.ElideRight
+                font.pixelSize: Style.font.title
+                width: Style.space(20)
+                horizontalAlignment: Text.AlignHCenter
               }
-            }
 
-            ToggleSwitch {
-              id: hookSwitch
-              visible: !hookRow.missing && hookRow.status !== ""
-              anchors.right: parent.right
-              anchors.rightMargin: Style.space(12)
-              anchors.verticalCenter: parent.verticalCenter
-              checked: hookRow.installed
-              busy: hookRow.busy
-              interactive: root.busyAgent === ""
-              foreground: root.barForeground
-              accent: root.accentColor
-              onToggled: root.runSetup(hookRow.installed ? "remove" : "install", hookRow.modelData.id)
+              Column {
+                id: hookLabels
+                anchors.left: hookGlyph.right
+                anchors.leftMargin: Style.space(10)
+                anchors.right: hookSwitch.left
+                anchors.rightMargin: Style.space(12)
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: Style.space(2)
+
+                Text {
+                  width: parent.width
+                  text: hookRow.modelData.name
+                  color: hookRow.missing ? root.dimForeground : root.barForeground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                  font.bold: true
+                  elide: Text.ElideRight
+                }
+
+                Text {
+                  width: parent.width
+                  text: hookRow.caption
+                  color: hookRow.failed ? root.urgentForeground : (hookRow.installed ? root.doneColor : root.dimForeground)
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  elide: Text.ElideRight
+                }
+              }
+
+              ToggleSwitch {
+                id: hookSwitch
+                visible: !hookRow.missing && hookRow.status !== ""
+                anchors.right: parent.right
+                anchors.rightMargin: Style.space(12)
+                anchors.verticalCenter: parent.verticalCenter
+                checked: hookRow.installed
+                busy: hookRow.busy
+                interactive: root.busyAgent === ""
+                foreground: root.barForeground
+                accent: hookRow.agentColor
+                onToggled: root.runSetup(hookRow.installed ? "remove" : "install", hookRow.modelData.id)
+              }
             }
           }
         }

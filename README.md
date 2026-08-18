@@ -15,7 +15,7 @@ row in the panel to jump straight to it.
 omarchy plugin add https://github.com/5d0tal1gat0r/omarchy-agent-watcher.git --enable
 ```
 
-Then open the panel (click the camera) and press **Install** next to each agent
+Then open the panel (click the camera), expand **Hooks** and flip the switch next to each agent
 you use. That adds a few hook entries to the agent's own config:
 
 | agent | what gets written | note |
@@ -32,7 +32,7 @@ haven't been trusted yet.
 
 A backup `<file>.agent-watcher.bak` is written before every change, only
 entries pointing at `agent-watcher-hook` are ever added or removed, and
-**Remove** undoes it. The same works from a shell:
+flipping the switch off undoes it. The same works from a shell:
 
 ```sh
 ~/.config/omarchy/plugins/io.github.5d0tal1gat0r.agent-watcher/bin/agent-watcher-setup status all
@@ -40,7 +40,7 @@ entries pointing at `agent-watcher-hook` are ever added or removed, and
 ~/.config/omarchy/plugins/io.github.5d0tal1gat0r.agent-watcher/bin/agent-watcher-setup remove claude
 ```
 
-**Before removing the plugin**, click **Remove** for each agent (or run
+**Before removing the plugin**, switch the hooks off for each agent (or run
 `agent-watcher-setup remove <agent>`); the hooks are absolute paths into the
 plugin directory and would otherwise fail on every agent turn.
 
@@ -51,7 +51,8 @@ plugin directory and would otherwise fail on every agent turn.
 | pill | left click | open / close the panel (Esc closes, Tab switches panels, Enter refreshes) |
 | pill | middle click | refresh now |
 | panel | click a session | focus its window (switches workspace) |
-| panel | Install / Remove | manage that agent's hooks |
+| panel | **Hooks** header | expand / collapse the per-agent switches (opens by itself while nothing is installed) |
+| panel | agent switch | install / remove that agent's hooks |
 
 Pill: `󰞮 2 · 1` = 2 sessions working, 1 needs attention. Dimmed icon = no
 sessions. Blink colors come from your theme (`green` / `yellow`).

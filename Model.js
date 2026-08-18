@@ -3,11 +3,14 @@
 // by the node test-suite through require(), so it stays ES5-style and ends
 // with a module.exports guard (same convention as omarchy-stocks).
 
+// Per-agent identity: display name, a brand-leaning color and a Nerd Font
+// glyph (all present in the bar font). Colors: Anthropic orange, OpenAI green,
+// Google blue, and a violet for OpenCode.
 var AGENTS = [
-  { id: "claude", name: "Claude Code" },
-  { id: "codex", name: "Codex" },
-  { id: "gemini", name: "Gemini CLI" },
-  { id: "opencode", name: "OpenCode" }
+  { id: "claude", name: "Claude Code", color: "#D97757", glyph: "\uDB81\uDEC4" },  // nf-md-asterisk
+  { id: "codex", name: "Codex", color: "#10A37F", glyph: "\uF489" },               // nf-oct-terminal
+  { id: "gemini", name: "Gemini CLI", color: "#4E8EF7", glyph: "\uDB82\uDE28" },   // nf-md-star-four-points
+  { id: "opencode", name: "OpenCode", color: "#B180F0", glyph: "\uDB80\uDD69" }    // nf-md-code-braces
 ]
 var STATES = ["working", "waiting", "done", "idle"]
 var STATE_RANK = { waiting: 0, done: 1, working: 2, idle: 3 }
@@ -18,9 +21,25 @@ function trimString(value) {
   return String(value === undefined || value === null ? "" : value).replace(/^\s+|\s+$/g, "")
 }
 
+function agentInfo(id) {
+  for (var i = 0; i < AGENTS.length; i++) if (AGENTS[i].id === id) return AGENTS[i]
+  return null
+}
+
 function agentName(id) {
-  for (var i = 0; i < AGENTS.length; i++) if (AGENTS[i].id === id) return AGENTS[i].name
-  return trimString(id) || "Agent"
+  var a = agentInfo(id)
+  return a ? a.name : (trimString(id) || "Agent")
+}
+
+// Unknown agents fall back to `fallback` (the caller passes the theme accent).
+function agentColor(id, fallback) {
+  var a = agentInfo(id)
+  return a ? a.color : (fallback === undefined || fallback === null ? "" : fallback)
+}
+
+function agentGlyph(id) {
+  var a = agentInfo(id)
+  return a ? a.glyph : BAR_ICON
 }
 
 // Settings arrive as real booleans from shell.json, but `omarchy bar set`
@@ -342,6 +361,8 @@ if (typeof module !== "undefined") {
     BAR_ICON: BAR_ICON,
     OTHER_GROUP_ID: OTHER_GROUP_ID,
     agentName: agentName,
+    agentColor: agentColor,
+    agentGlyph: agentGlyph,
     boolSetting: boolSetting,
     normalizeAddress: normalizeAddress,
     sessionKey: sessionKey,

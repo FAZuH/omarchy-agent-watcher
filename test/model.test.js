@@ -13,6 +13,20 @@ test("agentName: known ids map to display names, unknown ids pass through", () =
   assert.equal(Model.agentName(""), "Agent")
 })
 
+test("agentColor/agentGlyph: every agent has a hex color and a glyph; unknown ids fall back", () => {
+  for (const a of Model.AGENTS) {
+    assert.match(Model.agentColor(a.id, "#000"), /^#[0-9a-fA-F]{6}$/)
+    assert.equal(Model.agentGlyph(a.id).length > 0, true)
+    assert.equal(Model.agentColor(a.id, "#000"), a.color)
+    assert.equal(Model.agentGlyph(a.id), a.glyph)
+  }
+  assert.equal(Model.agentColor("aider", "#123456"), "#123456")
+  assert.equal(Model.agentColor("aider"), "")
+  assert.equal(Model.agentGlyph("aider"), Model.BAR_ICON)
+  const colors = Model.AGENTS.map(a => a.color)
+  assert.equal(new Set(colors).size, colors.length, "colors are distinct")
+})
+
 test("boolSetting: accepts booleans and common string spellings, else fallback", () => {
   assert.equal(Model.boolSetting(true, false), true)
   assert.equal(Model.boolSetting(false, true), false)
