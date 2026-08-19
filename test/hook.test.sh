@@ -348,8 +348,11 @@ grep -q "\"$ROOT/bin/agent-watcher-hook\"" "$AGENT_WATCHER_OPENCODE_PLUGIN" && o
 grep -q "__HOOK_PATH__" "$AGENT_WATCHER_OPENCODE_PLUGIN" && ko "placeholder left in opencode plugin" || ok
 node --input-type=module -e "import('file://$AGENT_WATCHER_OPENCODE_PLUGIN').then(m => { if (typeof m.AgentWatcher !== 'function') process.exit(1) })" && ok || ko "opencode plugin is importable ESM exporting AgentWatcher"
 assert_eq "$("$SETUP" status opencode)" "opencode installed" "opencode status"
+"$SETUP" install opencode >/dev/null
+assert_file "$AGENT_WATCHER_OPENCODE_PLUGIN.agent-watcher.bak" "re-installing the opencode plugin backs up the previous file"
 "$SETUP" remove opencode >/dev/null
 assert_nofile "$AGENT_WATCHER_OPENCODE_PLUGIN" "opencode remove deletes the plugin"
+assert_file "$AGENT_WATCHER_OPENCODE_PLUGIN.agent-watcher.bak" "opencode remove leaves a backup"
 
 echo "== setup: status all / agent-missing / usage"
 assert_eq "$("$SETUP" status all | wc -l)" 4 "status all prints four lines"

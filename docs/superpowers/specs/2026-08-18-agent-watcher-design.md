@@ -238,7 +238,7 @@ bash; deps `jq`, `hyprctl`, `omarchy-shell` (all present on Omarchy).
 - `gemini`: same into `~/.gemini/settings.json` → `hooks` for `SessionStart`,
   `BeforeAgent`, `Notification`, `AfterTool`, `AfterAgent`, `SessionEnd`.
 - `opencode`: copy `hooks/opencode-agent-watcher.js` into
-  `~/.config/opencode/plugin/`; the plugin subscribes to `session.created`,
+  `~/.config/opencode/plugins/`; the plugin subscribes to `session.created`,
   `session.status`, `permission.asked`, `permission.replied`, `session.idle`
   and spawns the hook script with a synthetic `{"session_id","cwd"}` payload.
 - Idempotent: our entries are recognised by the command containing

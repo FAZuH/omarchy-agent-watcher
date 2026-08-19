@@ -152,6 +152,7 @@ install_agent() {
     opencode)
       [ -f "$TEMPLATE" ] || die "missing template $TEMPLATE"
       mkdir -p "$(dirname "$OPENCODE_PLUGIN")" || die "cannot create $(dirname "$OPENCODE_PLUGIN")"
+      backup "$OPENCODE_PLUGIN"
       sed "s|__HOOK_PATH__|$HOOK|g" "$TEMPLATE" > "$OPENCODE_PLUGIN" || die "could not write $OPENCODE_PLUGIN" ;;
     *) usage ;;
   esac
@@ -162,7 +163,7 @@ install_agent() {
 remove_agent() {
   case "$1" in
     claude|codex|gemini) remove_hooks "$(config_file "$1")" || die "could not update $(config_file "$1")" ;;
-    opencode) rm -f "$OPENCODE_PLUGIN" ;;
+    opencode) backup "$OPENCODE_PLUGIN"; rm -f "$OPENCODE_PLUGIN" ;;
     *) usage ;;
   esac
 }

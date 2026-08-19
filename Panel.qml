@@ -455,6 +455,7 @@ Panel {
                     Text {
                       anchors.verticalCenter: parent.verticalCenter
                       text: root.labelFor(row.modelData)
+                      textFormat: Text.PlainText   // agent-supplied text is never markup
                       color: root.barForeground
                       font.family: root.fontFamily
                       font.pixelSize: Style.font.subtitle
@@ -478,6 +479,7 @@ Panel {
                   Text {
                     width: parent.width
                     text: root.subtitleFor(row.modelData)
+                    textFormat: Text.PlainText
                     color: root.dimForeground
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
@@ -631,6 +633,7 @@ Panel {
                 Text {
                   width: parent.width
                   text: hookRow.caption
+                  textFormat: Text.PlainText   // may carry a stderr line from the setup script
                   color: hookRow.failed ? root.urgentForeground : (hookRow.installed ? root.doneColor : root.dimForeground)
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption

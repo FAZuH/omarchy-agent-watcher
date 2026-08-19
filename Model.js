@@ -122,9 +122,12 @@ function projectName(cwd) {
 }
 
 // Terminal titles from agents start with a status glyph (Claude Code's
-// spinner ◐◓◑◒, ✳, ✶ …). Keep the human part.
+// spinner ◐◓◑◒, ✳, ✶, a Nerd Font icon …). Strip only such decoration —
+// arrows, geometric shapes, dingbats, braille spinners, private-use icons,
+// bullets — so titles in any script survive intact.
+var TITLE_DECORATION = /^(?:[\s\u00B7\u2022\u2190-\u21FF\u2500-\u27BF\u2800-\u28FF\u2B00-\u2BFF\uE000-\uF8FF*]|[\uDB80-\uDBBF][\uDC00-\uDFFF])+/
 function cleanTitle(title) {
-  return trimString(String(title === undefined || title === null ? "" : title).replace(/^[^A-Za-z0-9~\/._"'`(\[{<$@]+/, ""))
+  return trimString(String(title === undefined || title === null ? "" : title).replace(TITLE_DECORATION, ""))
 }
 
 // "/home/u/dev/api" -> "~/dev/api" when `home` is that prefix.
