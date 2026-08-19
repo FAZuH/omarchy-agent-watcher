@@ -1837,7 +1837,7 @@ BarWidget {
 
 Run:
 ```bash
-sed '/^  IpcHandler {/,/^  }/d' BarWidget.qml > /tmp/claude-1000/-home-al1gat0r-Proyects-omarchy-plugins-dev/888da9a8-6535-46fc-8332-bb6444c8a2b3/scratchpad/AwBar.qml && cp Model.js Panel.qml /tmp/claude-1000/-home-al1gat0r-Proyects-omarchy-plugins-dev/888da9a8-6535-46fc-8332-bb6444c8a2b3/scratchpad/ && qmllint -I /usr/share/omarchy/shell /tmp/claude-1000/-home-al1gat0r-Proyects-omarchy-plugins-dev/888da9a8-6535-46fc-8332-bb6444c8a2b3/scratchpad/AwBar.qml; echo "qmllint exit $?"
+sed '/^  IpcHandler {/,/^  }/d' BarWidget.qml > /tmp/agent-watcher-scratch/AwBar.qml && cp Model.js Panel.qml /tmp/agent-watcher-scratch/ && qmllint -I /usr/share/omarchy/shell /tmp/agent-watcher-scratch/AwBar.qml; echo "qmllint exit $?"
 ```
 Expected: exit 0 with at most "unqualified access"-style warnings; fix real errors (unknown property/type) before continuing. `omarchy plugin validate .` must also print nothing.
 
@@ -1858,7 +1858,7 @@ D="$XDG_RUNTIME_DIR/omarchy-agent-watcher"; mkdir -p "$D"; now=$(date +%s)
 printf '{"agent":"claude","sessionId":"demo1","state":"working","cwd":"/tmp/alpha","agentPid":0,"windowAddress":"","updatedAt":%s,"lastEvent":"prompt"}' "$now" > "$D/claude-demo1.json"
 printf '{"agent":"codex","sessionId":"demo2","state":"done","cwd":"/tmp/beta","agentPid":0,"windowAddress":"","updatedAt":%s,"lastEvent":"done"}' "$now" > "$D/codex-demo2.json"
 omarchy-shell io.github.5d0tal1gat0r.agent-watcher refresh; sleep 1
-grim -o eDP-1 /tmp/claude-1000/-home-al1gat0r-Proyects-omarchy-plugins-dev/888da9a8-6535-46fc-8332-bb6444c8a2b3/scratchpad/bar.png
+grim -o eDP-1 /tmp/agent-watcher-scratch/bar.png
 ```
 Read the PNG (crop the bar's right end with `magick bar.png -crop 600x40+<W-600>+0 crop.png`, monitor width from `hyprctl monitors -j | jq '.[0].width'`). Expected: `󱚣 1 · 1` with the trailing `1` and the icon in theme green, visibly pulsing between two consecutive screenshots ~0.5 s apart. Then `printf ... "state":"waiting"` into `codex-demo2.json` + refresh → yellow. Then `rm "$D"/*.json` + refresh → dimmed icon only.
 
@@ -2334,7 +2334,7 @@ Panel {
 
 - [ ] **Step 2: Lint**
 
-Run: `cp Panel.qml Model.js /tmp/claude-1000/-home-al1gat0r-Proyects-omarchy-plugins-dev/888da9a8-6535-46fc-8332-bb6444c8a2b3/scratchpad/ && qmllint -I /usr/share/omarchy/shell /tmp/claude-1000/-home-al1gat0r-Proyects-omarchy-plugins-dev/888da9a8-6535-46fc-8332-bb6444c8a2b3/scratchpad/Panel.qml; echo "exit $?"`
+Run: `cp Panel.qml Model.js /tmp/agent-watcher-scratch/ && qmllint -I /usr/share/omarchy/shell /tmp/agent-watcher-scratch/Panel.qml; echo "exit $?"`
 Expected: exit 0 (warnings about unqualified access are fine).
 
 - [ ] **Step 3: Install, restart, open the panel with fake state and screenshot**
@@ -2348,7 +2348,7 @@ printf '{"agent":"claude","sessionId":"demo1","state":"working","cwd":"/tmp/alph
 printf '{"agent":"gemini","sessionId":"demo2","state":"done","cwd":"/tmp/beta","agentPid":0,"windowAddress":"","updatedAt":%s,"lastEvent":"done"}' "$now" > "$D/gemini-demo2.json"
 omarchy-shell io.github.5d0tal1gat0r.agent-watcher refresh; sleep 1
 omarchy-shell shell summon io.github.5d0tal1gat0r.agent-watcher '{}'; sleep 1
-grim -o eDP-1 /tmp/claude-1000/-home-al1gat0r-Proyects-omarchy-plugins-dev/888da9a8-6535-46fc-8332-bb6444c8a2b3/scratchpad/panel.png
+grim -o eDP-1 /tmp/agent-watcher-scratch/panel.png
 ```
 Read the PNG. Expected: header "Agent sessions" + "2 sessions · 1 working · 1 done"; a "Workspace N · current" group with the claude row (dot in foreground color, tag `claude`, project `alpha`, state `working`, this terminal's title as subtitle); an "Other" group with the gemini row (`done` in green, highlighted); a Hooks section with four agents, statuses (Claude Code/Codex/Gemini/OpenCode all "not installed" with Install chips — the config dirs exist on this machine); footer hint. Click the claude row (or `hyprctl dispatch focuswindow address:0x$ADDR`) → panel closes. Clean up: `rm "$D"/*.json; omarchy-shell io.github.5d0tal1gat0r.agent-watcher refresh`.
 
@@ -2481,7 +2481,7 @@ MIT — see LICENSE.
 
 - [ ] **Step 3: Final checks**
 
-Run: `node --test test/model.test.js && bash test/hook.test.sh && omarchy plugin validate . && grep -rn "al1gat0r\|/home/" --exclude-dir=.git . ; echo "grep exit $? (1 = clean)"`
+Run: `node --test test/model.test.js && bash test/hook.test.sh && omarchy plugin validate . && grep -rn "<your-username>\|/home/" --exclude-dir=.git . ; echo "grep exit $? (1 = clean)"`
 Expected: tests pass, validate silent, grep finds nothing (exit 1).
 
 - [ ] **Step 4: Commit**
