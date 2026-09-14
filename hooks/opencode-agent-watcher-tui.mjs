@@ -78,15 +78,18 @@ function pending(storeObj, key, sessionId) {
 }
 
 // The tracked slice of one session. state: working | waiting | done -- waiting
-// means a permission or question is pending; anything but idle (running,
-// retry, ...) counts as working because the turn is still going. Returns null
-// for anything this window should not track (child sessions, unknown ids).
-export function snapshot(ctx, sessionId) {
+// means a permission or question is pending, on this session or on any of its
+// subagent children (a blocked child stalls the parent's turn, so the parent
+// row must show attention); anything but idle (running, retry, ...) counts as
+// working because the turn is still going. Returns null for anything this
+// window should not track (child sessions, unknown ids).
+export function snapshot(ctx, sessionId, childIds) {
   const ds = store(ctx)
   if (!ds) return null
   const s = ds.get?.(sessionId)
   if (!s || s.parentID) return null
-  const waiting = pending(ds, "permission", sessionId).length > 0 || pending(ds, "pending", sessionId).length > 0
+  const blocked = (id) => pending(ds, "permission", id).length > 0 || pending(ds, "pending", id).length > 0
+  const waiting = blocked(sessionId) || (childIds || []).some(blocked)
   let status
   try {
     status = typeof ds.status === "function" ? ds.status(sessionId) : undefined
@@ -159,7 +162,17 @@ export default {
         const shown = selectedSessionId(ctx)
         const sessions = typeof ds.list === "function" ? ds.list() || [] : []
         const ids = new Set()
-        for (const s of sessions) if (s?.id && !s.parentID) ids.add(s.id)
+        const children = new Map()
+        for (const s of sessions) {
+          if (!s?.id) continue
+          if (s.parentID) {
+            const arr = children.get(s.parentID)
+            if (arr) arr.push(s.id)
+            else children.set(s.parentID, [s.id])
+            continue
+          }
+          ids.add(s.id)
+        }
         if (shown) ids.add(shown)
         for (const [sid, t] of [...tracked]) {
           if (!ids.has(sid)) {
@@ -170,7 +183,7 @@ export default {
         const now = Date.now()
         for (const sid of ids) {
           const windowed = sid === shown
-          const next = snapshot(ctx, sid)
+          const next = snapshot(ctx, sid, children.get(sid))
           let t = tracked.get(sid)
           if (!t) {
             // Idle sessions are not watched: no row until something happens.

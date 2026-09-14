@@ -63,6 +63,23 @@ test("snapshot: documented object statuses and function stores also work", () =>
   assert.equal(s.cwd, "/d")
 })
 
+test("snapshot: a pending permission or question on a subagent child makes the parent waiting", () => {
+  const childCtx = (key) => ({
+    data: {
+      session: {
+        get: (id) => (id === "s1" ? sess() : id === "c1" ? { id: "c1", parentID: "s1" } : undefined),
+        status: () => "running",
+        permission: { list: (id) => (id === "c1" && key === "permission" ? [{ id: "p" }] : []) },
+        pending: { list: (id) => (id === "c1" && key === "pending" ? [{ id: "q" }] : []) },
+      },
+    },
+  })
+  assert.equal(snapshot(childCtx("permission"), "s1", ["c1"]).state, "waiting")
+  assert.equal(snapshot(childCtx("pending"), "s1", ["c1"]).state, "waiting")
+  assert.equal(snapshot(childCtx("permission"), "s1").state, "working")
+  assert.equal(snapshot(childCtx("permission"), "s1", []).state, "working")
+})
+
 test("snapshot: carries id, cwd and title; child and unknown sessions are untracked", () => {
   const s = snapshot(fakeApi(sess(), { status: "idle" }), "s1")
   assert.deepEqual({ sessionId: s.sessionId, cwd: s.cwd, title: s.title }, { sessionId: "s1", cwd: "/proj", title: "fix the bar" })

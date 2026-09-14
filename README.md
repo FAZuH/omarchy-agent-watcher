@@ -111,7 +111,9 @@ a window — click-to-focus works on both generations.
   is only a client. The plugin reports every session that is working or
   waiting, whether or not a terminal has it open: the session a window is
   showing keeps that window (click to focus), all others appear under
-  **Other**. A finished session lingers ~10 minutes so its blink is noticed
+  **Other**. A sub-agent (child session) blocked on a permission prompt makes
+  its parent's row blink, even though the child has no row of its own. A
+  finished session lingers ~10 minutes so its blink is noticed
   (or right-click it to dismiss now); then the row retires until the session
   works again.
 
