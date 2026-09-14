@@ -105,11 +105,12 @@ a window — click-to-focus works on both generations.
   Claude Code's own background plumbing (the `claude daemon` and the
   `bg-pty-host` sessions it pre-spawns) are intentionally not listed — only
   the sessions you opened are.
-- On OpenCode v2 a session runs in the shared background service while the TUI
-  is only a client, so the plugin reports the session each TUI window is
-  currently showing: switch sessions in a window and the bar row follows, and
-  headless `opencode run` sessions (no TUI, no window to focus) are not
-  watched at all.
+- On OpenCode v2 sessions run in the shared background service while the TUI
+  is only a client. The plugin reports every session that is working or
+  waiting, whether or not a terminal has it open: the session a window is
+  showing keeps that window (click to focus), all others appear under
+  **Other**. A finished session lingers ~10 minutes so its blink is noticed,
+  then the row retires until the session works again.
 
 ## Develop
 

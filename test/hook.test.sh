@@ -80,7 +80,7 @@ assert_eq "$(hyprctl_calls)" 1 "one hyprctl call"
 
 run_agent claude prompt '{"session_id":"s1","cwd":"/tmp/proj"}' >/dev/null
 assert_eq "$(field "$F" .state)" working "prompt -> working"
-assert_eq "$(hyprctl_calls)" 1 "window cached: no second hyprctl call"
+assert_eq "$(hyprctl_calls)" 2 "every windowed event re-resolves, so a new owner can take the row over"
 run_agent claude waiting '{"session_id":"s1","cwd":"/tmp/proj"}' >/dev/null
 assert_eq "$(field "$F" .state)" waiting "waiting -> waiting"
 pings=$(shell_pings)
@@ -97,6 +97,28 @@ run_agent claude prompt '{"session_id":"s1"}' >/dev/null
 assert_eq "$(field "$F" .cwd)" /tmp/proj "missing cwd keeps the previous one"
 run_agent claude session-end '{"session_id":"s1","cwd":"/tmp/proj"}' >/dev/null
 assert_nofile "$F" "session-end removes the file"
+
+echo "== hook: windowless reports (OpenCode v2 shared-service watchers)"
+reset_logs
+WF="$AGENT_WATCHER_STATE_DIR/opencode-w1.json"
+W2="$AGENT_WATCHER_STATE_DIR/opencode-w2.json"
+run_agent opencode session-start '{"session_id":"w1","cwd":"/tmp/proj","title":"owned"}' >/dev/null
+assert_eq "$(field "$WF" .windowAddress)" abc123 "windowed event attaches the reporter's window"
+PID1=$(field "$WF" .agentPid)
+calls=$(hyprctl_calls)
+run_agent opencode prompt '{"session_id":"w1","cwd":"/tmp/proj","windowless":true}' >/dev/null
+assert_eq "$(field "$WF" .state)" working "windowless event still updates state"
+assert_eq "$(field "$WF" .windowAddress)" abc123 "windowless event keeps the existing window"
+assert_eq "$(field "$WF" .agentPid)" "$PID1" "windowless event keeps the owner pid"
+assert_eq "$(hyprctl_calls)" "$calls" "windowless event does not call hyprctl"
+run_agent opencode session-start '{"session_id":"w2","cwd":"/tmp/proj","windowless":true}' >/dev/null
+assert_eq "$(field "$W2" .windowAddress)" "" "fresh windowless row gets no window"
+assert_eq "$(field "$W2" .agentPid)" 0 "fresh windowless row gets no owner pid"
+run_agent opencode prompt '{"session_id":"w2","cwd":"/tmp/proj"}' >/dev/null
+assert_eq "$(field "$W2" .windowAddress)" abc123 "a later windowed report takes the row over"
+assert_eq "$(field "$W2" .state)" working "takeover updates state too"
+run_agent opencode session-end '{"session_id":"w1"}' >/dev/null
+run_agent opencode session-end '{"session_id":"w2"}' >/dev/null
 
 echo "== hook: an agent whose own cmdline mentions agent-watcher"
 # Only our own wrapper (bin/agent-watcher-hook) may be skipped during the PPID

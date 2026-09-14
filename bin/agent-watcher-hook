@@ -182,6 +182,11 @@ CWD=$(printf '%s' "$INPUT" | jq -r '.cwd // .directory // empty' 2>/dev/null)
 # title); other agents leave it empty and the shell falls back to the window
 # title / project name.
 TITLE=$(printf '%s' "$INPUT" | jq -r '.title // empty' 2>/dev/null)
+# Reporters that watch sessions beyond their own terminal (OpenCode v2's
+# shared service) mark events windowless: the row keeps whatever window an
+# earlier owner registered, but a fresh one gets none instead of the
+# reporter's own terminal, and no agent pid to age out on.
+WINDOWLESS=$(printf '%s' "$INPUT" | jq -r '.windowless // false' 2>/dev/null)
 
 # Gemini fires Notification for more than permissions; only ToolPermission blocks.
 if [ "$AGENT" = gemini ] && [ "$EVENT" = waiting ]; then
@@ -226,12 +231,16 @@ fi
 # tool-done only matters while blocked on a permission.
 if [ "$EVENT" = tool-done ] && [ "$PREV_STATE" != waiting ]; then exit 0; fi
 
-# The window is resolved once per session (hyprctl is the expensive part).
-if [ -n "$PREV_WINDOW" ]; then
-  resolve_ancestry "$AGENT" 0
+# A windowless report never touches window attribution (it comes from a
+# terminal that is not the session's); any other report re-resolves and, when
+# it finds a window, takes it over -- the terminal now showing the session is
+# its real owner.
+if [ "$WINDOWLESS" = true ]; then
   WINDOW_ADDRESS="$PREV_WINDOW"
+  AGENT_PID="${PREV_PID:-0}"
 else
   resolve_ancestry "$AGENT" 1
+  [ -n "$WINDOW_ADDRESS" ] || WINDOW_ADDRESS="$PREV_WINDOW"
 fi
 # A session spawned by the agent's own background plumbing is not the user's:
 # ignore it and drop anything an earlier event of it may have written.

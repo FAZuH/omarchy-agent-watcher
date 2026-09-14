@@ -8,11 +8,13 @@
 //
 // OpenCode v2 runs sessions in a shared service and the TUI is only a client,
 // so there is no per-session hook to ride: instead a 1 s poll of the TUI's own
-// data store (selected session + status/permission/question state) is diffed
-// and every transition is forwarded to the hook. Only the session this TUI
-// window is currently showing is reported -- switching sessions in the TUI
-// hands the row (and its window) over, and closing the TUI prunes it via the
-// usual dead-process checks.
+// synced store diffs every session and forwards each transition to the hook.
+// The session this window is showing is reported with its terminal (click to
+// focus); all other busy or waiting sessions are reported windowless and land
+// under Other. A finished session keeps its row for a grace period so the
+// blink is visible, then it drops out until it works again. Sessions that are
+// simply idle are never announced: a row appears only once a session works,
+// waits, or finishes a turn.
 //
 // The ctx shapes below were verified against opencode 2.0.3 (data.session.*),
 // with fallbacks for the documented TuiPluginApi surface (state.session.*).
@@ -21,6 +23,9 @@ import { spawn } from "node:child_process"
 const HOOK = "__HOOK_PATH__"
 const HOOK_TIMEOUT_MS = 5000
 const POLL_INTERVAL_MS = 1000
+// How long a windowless session that finished keeps its row before the
+// watcher retires it (the blink needs time to be noticed).
+const DONE_GRACE_MS = 10 * 60 * 1000
 
 // Same discipline as the v1 bridge: every send is a separate process and
 // transitions can land in the same millisecond, so run them one at a time --
@@ -28,7 +33,9 @@ const POLL_INTERVAL_MS = 1000
 // whichever process happened to finish last.
 let queue = Promise.resolve()
 
-function send(event, sessionId, cwd, title) {
+function send(event, sessionId, cwd, title, windowless) {
+  const payload = { session_id: sessionId, cwd: cwd, title: title || "" }
+  if (windowless) payload.windowless = true
   queue = queue
     .then(
       () =>
@@ -48,7 +55,7 @@ function send(event, sessionId, cwd, title) {
             child.on("error", finish)
             child.on("close", finish)
             child.stdin.on("error", () => {})
-            child.stdin.end(JSON.stringify({ session_id: sessionId, cwd: cwd, title: title || "" }))
+            child.stdin.end(JSON.stringify(payload))
           } catch (e) {
             finish() // never let a watcher failure surface inside the agent
           }
@@ -88,7 +95,10 @@ export function snapshot(ctx, sessionId) {
   let state = "done"
   if (waiting) state = "waiting"
   else if (kind && kind !== "idle") state = "working"
-  return { sessionId, cwd: s.location?.directory || s.directory || "", title: s.title || "", state }
+  // Titles are model-generated and occasionally multiline or padded; the bar
+  // renders one line, so collapse whitespace here.
+  const title = (s.title || "").replace(/\s+/g, " ").trim()
+  return { sessionId, cwd: s.location?.directory || s.directory || "", title, state }
 }
 
 // Pure diff between the previously reported snapshot and the current one;
@@ -97,8 +107,10 @@ export function snapshot(ctx, sessionId) {
 export function transitions(prev, next) {
   if (!prev && !next) return []
   if (!prev) {
-    // A fresh session must not blink green: "done" is only ever sent for a
-    // turn that actually finished, so idle-at-creation sends nothing extra.
+    // Re-announcement after an ownership flip (the shown window changed). A
+    // fresh session must not blink green: "done" is only ever sent for a turn
+    // that actually finished, and idle sessions are never announced at all.
+    if (next.state === "done") return ["done"]
     const out = ["session-start"]
     if (next.state === "working") out.push("prompt")
     if (next.state === "waiting") out.push("waiting")
@@ -134,26 +146,65 @@ export function selectedSessionId(ctx) {
 export default {
   id: "agent-watcher-tui",
   setup: async (ctx) => {
-    let tracked = null // session id reported for this window, "" when none
-    let prev = null // last snapshot sent for it
+    // sessionId -> { prev, windowed, doneSince }
+    const tracked = new Map()
+    const retire = (sid, t) => {
+      const cur = t.prev
+      send("session-end", sid, cur?.cwd || "", cur?.title || "", !t.windowed)
+    }
     const tick = () => {
       try {
-        const sid = selectedSessionId(ctx)
-        if (sid !== tracked) {
-          if (tracked && prev) send("session-end", tracked, prev.cwd, prev.title)
-          tracked = sid
-          prev = null
+        const ds = store(ctx)
+        if (!ds) return
+        const shown = selectedSessionId(ctx)
+        const sessions = typeof ds.list === "function" ? ds.list() || [] : []
+        const ids = new Set()
+        for (const s of sessions) if (s?.id && !s.parentID) ids.add(s.id)
+        if (shown) ids.add(shown)
+        for (const [sid, t] of [...tracked]) {
+          if (!ids.has(sid)) {
+            retire(sid, t)
+            tracked.delete(sid)
+          }
         }
-        if (!sid) return
-        const next = snapshot(ctx, sid)
-        for (const event of transitions(prev, next)) {
-          const cur = next || prev
-          send(event, cur.sessionId, cur.cwd, cur.title)
+        const now = Date.now()
+        for (const sid of ids) {
+          const windowed = sid === shown
+          const next = snapshot(ctx, sid)
+          let t = tracked.get(sid)
+          if (!t) {
+            // Idle sessions are not watched: no row until something happens.
+            if (!next || next.state === "done") continue
+            t = { prev: null, windowed, doneSince: 0 }
+            tracked.set(sid, t)
+          } else if (t.windowed !== windowed) {
+            // This window started or stopped showing it. Leaving a finished
+            // session retires the row; otherwise re-announce so the row's
+            // window attribution follows the real owner.
+            t.windowed = windowed
+            if (!windowed && (!next || next.state === "done")) {
+              retire(sid, t)
+              tracked.delete(sid)
+              continue
+            }
+            t.prev = null
+          }
+          for (const event of transitions(t.prev, next)) {
+            const cur = next || t.prev
+            send(event, sid, cur?.cwd || "", cur?.title || "", !windowed)
+          }
+          if (next && next.state === "done" && !windowed) {
+            if (!t.doneSince) t.doneSince = now
+            else if (now - t.doneSince > DONE_GRACE_MS) {
+              retire(sid, t)
+              tracked.delete(sid)
+              continue
+            }
+          } else {
+            t.doneSince = 0
+          }
+          t.prev = next
         }
-        // The selected id stays tracked even while unreadable (child session
-        // selected, state lag): prev is cleared either way, so one bad tick
-        // cannot re-send session-end on every poll.
-        prev = next
       } catch (e) {
         // never let a watcher failure surface inside the TUI
       }

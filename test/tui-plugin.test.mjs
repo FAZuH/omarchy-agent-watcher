@@ -43,6 +43,11 @@ test("snapshot: status maps to the watcher states; permissions and pending win",
   assert.equal(snapshot(fakeApi(sess(), { status: "running", pending: [{ id: "q" }] }), "s1").state, "waiting")
 })
 
+test("snapshot: multiline and padded titles collapse to one line", () => {
+  const s = snapshot(fakeApi(sess({ title: " Omarchy: proj\nOmarchy: proj " }, { status: "idle" })), "s1")
+  assert.equal(s.title, "Omarchy: proj Omarchy: proj")
+})
+
 test("snapshot: documented object statuses and function stores also work", () => {
   const ctx = {
     state: {
@@ -70,7 +75,9 @@ test("snapshot: carries id, cwd and title; child and unknown sessions are untrac
 const snap = (state, title = "t") => ({ sessionId: "s1", cwd: "/proj", title, state })
 
 test("transitions: a new session starts, and never blinks done at creation", () => {
-  assert.deepEqual(transitions(null, snap("done")), ["session-start"])
+  // Idle sessions are never announced by the watcher, so a null-prev "done"
+  // only happens on an ownership flip of a row that already exists.
+  assert.deepEqual(transitions(null, snap("done")), ["done"])
   assert.deepEqual(transitions(null, snap("working")), ["session-start", "prompt"])
   assert.deepEqual(transitions(null, snap("waiting")), ["session-start", "waiting"])
   assert.deepEqual(transitions(null, null), [])
