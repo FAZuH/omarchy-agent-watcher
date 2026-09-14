@@ -73,6 +73,30 @@ BarWidget {
     sessions = Model.markSeen(sessions, addr)
   }
 
+  // ---- Right-click dismiss of a done session: drop the row now and delete
+  // its state file through the hook. If the session works again the agent
+  // reports it and a fresh row appears.
+  property var dismissQueue: []
+
+  function dismissSession(session) {
+    if (!session || session.state !== "done") return
+    sessions = Model.removeSession(sessions, session.key)
+    dismissQueue = dismissQueue.concat([session])
+    pumpDismiss()
+  }
+
+  function pumpDismiss() {
+    if (dismissProc.running || dismissQueue.length === 0) return
+    var s = dismissQueue[0]
+    dismissQueue = dismissQueue.slice(1)
+    // The hook reads its JSON event on stdin: printf feeds it and closes the
+    // pipe, positional "$0"/"$1" keep the payload and paths quoting-safe.
+    dismissProc.command = ["sh", "-c",
+      'printf %s "$0" | exec "$1" "$2" session-end',
+      JSON.stringify({ session_id: s.sessionId }), hookScript, s.agent]
+    dismissProc.running = true
+  }
+
   function focusSession(session) {
     if (!session || session.windowAddress === "") return
     var target = "address:0x" + session.windowAddress
@@ -183,6 +207,12 @@ BarWidget {
         }
       }
     }
+  }
+
+  Process {
+    id: dismissProc
+    running: false
+    onExited: root.pumpDismiss()
   }
 
   // Liveness: prune dead agents even when no hook ever fires again.

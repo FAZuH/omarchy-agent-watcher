@@ -2,10 +2,11 @@
 
 One bar pill for every AI-agent session on your desktop. Claude Code, Codex,
 Gemini CLI and OpenCode sessions are listed per Hyprland workspace with their
-state — **working**, **waiting** for you, **done**, idle — and the pill blinks
+state — **working**, **waiting** for you, **done** — and the pill blinks
 (green = finished, yellow = needs a permission) whenever that happens in a
 window you are not looking at. Focus the window and the blink stops; click a
-row in the panel to jump straight to it.
+row in the panel to jump straight to it. A session with no activity to report
+(idle) is never listed.
 
 ![preview](preview.png)
 
@@ -52,6 +53,7 @@ plugin directory and would otherwise fail on every agent turn.
 | pill | left click | open / close the panel (Esc closes, Tab switches panels, Enter refreshes) |
 | pill | middle click | refresh now |
 | panel | click a session | focus its window (switches workspace) |
+| panel | right click a **done** session | dismiss it from the list (a finished scheduled run, say); if it works again a fresh row appears |
 | panel | **Hooks** header | expand / collapse the per-agent switches (opens by itself while nothing is installed) |
 | panel | agent switch | install / remove that agent's hooks |
 
@@ -109,8 +111,9 @@ a window — click-to-focus works on both generations.
   is only a client. The plugin reports every session that is working or
   waiting, whether or not a terminal has it open: the session a window is
   showing keeps that window (click to focus), all others appear under
-  **Other**. A finished session lingers ~10 minutes so its blink is noticed,
-  then the row retires until the session works again.
+  **Other**. A finished session lingers ~10 minutes so its blink is noticed
+  (or right-click it to dismiss now); then the row retires until the session
+  works again.
 
 ## Develop
 

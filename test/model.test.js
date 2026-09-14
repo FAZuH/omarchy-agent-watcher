@@ -64,7 +64,8 @@ test("normalizeSession: rejects missing agent/id, unknown state, non-objects", (
   assert.equal(Model.normalizeSession({ agent: "", sessionId: "a", state: "idle" }), null)
   assert.equal(Model.normalizeSession({ agent: "claude", sessionId: "", state: "idle" }), null)
   assert.equal(Model.normalizeSession({ agent: "claude", sessionId: "a", state: "sleeping" }), null)
-  const s = Model.normalizeSession({ agent: "codex", sessionId: "a", state: "idle" })
+  assert.equal(Model.normalizeSession({ agent: "claude", sessionId: "a", state: "idle" }), null, "idle sessions are never listed")
+  const s = Model.normalizeSession({ agent: "codex", sessionId: "a", state: "working" })
   assert.equal(s.cwd, "")
   assert.equal(s.agentPid, 0)
   assert.equal(s.windowAddress, "")
@@ -79,7 +80,7 @@ test("parseSnapshot: tolerant of bad JSON, non-arrays and junk entries", () => {
     { agent: "claude", sessionId: "a", state: "working" },
     { agent: "claude", sessionId: "b", state: "bogus" },
     42,
-    { agent: "gemini", sessionId: "c", state: "idle", windowAddress: "0xFF" }
+    { agent: "gemini", sessionId: "c", state: "waiting", windowAddress: "0xFF" }
   ]))
   assert.deepEqual(list.map(s => s.key), ["claude-a", "gemini-c"])
   assert.equal(list[1].windowAddress, "ff")
@@ -145,8 +146,8 @@ test("sessionSubtitle: home-collapsed cwd, '?' when unknown", () => {
 })
 
 test("normalizeSession: keeps the optional title", () => {
-  assert.equal(Model.normalizeSession({ agent: "opencode", sessionId: "a", state: "idle", title: " New session " }).title, "New session")
-  assert.equal(Model.normalizeSession({ agent: "opencode", sessionId: "a", state: "idle" }).title, "")
+  assert.equal(Model.normalizeSession({ agent: "opencode", sessionId: "a", state: "working", title: " New session " }).title, "New session")
+  assert.equal(Model.normalizeSession({ agent: "opencode", sessionId: "a", state: "working" }).title, "")
 })
 
 test("cleanTitle: strips leading status glyphs and whitespace, keeps the text", () => {
@@ -197,7 +198,7 @@ test("pathFromUrl: file URL to a plain decoded path", () => {
 function snap(list) { return Model.parseSnapshot(JSON.stringify(list)) }
 const F = (over) => Object.assign({ agent: "claude", sessionId: "s1", state: "done", cwd: "/p", agentPid: 10, windowAddress: "aaa", updatedAt: 100, lastEvent: "done" }, over)
 
-test("mergeSessions: done/waiting born unseen unless the window is focused; working/idle are always seen", () => {
+test("mergeSessions: done/waiting born unseen unless the window is focused; working is always seen", () => {
   const m1 = Model.mergeSessions({}, snap([F({ state: "done" })]), "bbb", 100)
   assert.equal(m1["claude-s1"].seen, false)
   const m2 = Model.mergeSessions({}, snap([F({ state: "done" })]), "0xAAA", 100)
@@ -206,8 +207,7 @@ test("mergeSessions: done/waiting born unseen unless the window is focused; work
   assert.equal(m3["claude-s1"].seen, false)
   const m4 = Model.mergeSessions({}, snap([F({ state: "working" })]), "", 100)
   assert.equal(m4["claude-s1"].seen, true)
-  const m5 = Model.mergeSessions({}, snap([F({ state: "idle", windowAddress: "" })]), "", 100)
-  assert.equal(m5["claude-s1"].seen, true)
+  assert.deepEqual(snap([F({ state: "idle", windowAddress: "" })]), [], "idle never reaches the merge at all")
 })
 
 test("mergeSessions: unchanged event keeps seen and stateSince; new event recomputes seen", () => {
@@ -247,11 +247,18 @@ test("markSeen: only sessions on the focused window flip; others untouched", () 
   assert.equal(Model.markSeen(m, "")["claude-a"].seen, false)
 })
 
-test("displayState: a seen done reads as idle, everything else as-is", () => {
-  assert.equal(Model.displayState({ state: "done", seen: true }), "idle")
+test("displayState: the true state is always shown (no fake idle)", () => {
+  assert.equal(Model.displayState({ state: "done", seen: true }), "done")
   assert.equal(Model.displayState({ state: "done", seen: false }), "done")
   assert.equal(Model.displayState({ state: "waiting", seen: true }), "waiting")
   assert.equal(Model.displayState({ state: "working", seen: true }), "working")
+})
+
+test("removeSession: drops one key, leaves the rest", () => {
+  const m = { "claude-a": { key: "claude-a" }, "opencode-b": { key: "opencode-b" } }
+  assert.deepEqual(Object.keys(Model.removeSession(m, "claude-a")), ["opencode-b"])
+  assert.deepEqual(Object.keys(m).length, 2, "input is not mutated")
+  assert.deepEqual(Model.removeSession(null, "x"), {})
 })
 
 test("needsAttention: unseen done/waiting, gated by the blink settings", () => {
@@ -269,10 +276,10 @@ test("barSummary: counts, level priority (waiting beats done) and blink", () => 
   const list = [
     { state: "working", seen: true }, { state: "working", seen: true },
     { state: "done", seen: false }, { state: "done", seen: true },
-    { state: "waiting", seen: false }, { state: "idle", seen: true }
+    { state: "waiting", seen: false }
   ]
   const s = Model.barSummary(list, {})
-  assert.deepEqual(s, { total: 6, working: 2, waiting: 1, done: 1, attention: 2, level: "waiting", blink: true })
+  assert.deepEqual(s, { total: 5, working: 2, waiting: 1, done: 1, attention: 2, level: "waiting", blink: true })
   const d = Model.barSummary([{ state: "done", seen: false }], {})
   assert.equal(d.level, "done")
   const none = Model.barSummary([{ state: "working", seen: true }], {})
@@ -296,42 +303,41 @@ test("barParts/barLabel/verticalLabel: icon, working, dot, attention", () => {
 
 test("summaryLine: human header line", () => {
   assert.equal(Model.summaryLine(Model.barSummary([], {})), "No sessions")
-  assert.equal(Model.summaryLine(Model.barSummary([{ state: "idle", seen: true }], {})), "1 session")
+  assert.equal(Model.summaryLine(Model.barSummary([{ state: "working", seen: true }], {})), "1 session · 1 working")
   const s = Model.barSummary([{ state: "working", seen: true }, { state: "waiting", seen: false }, { state: "done", seen: false }], {})
   assert.equal(Model.summaryLine(s), "3 sessions · 1 working · 1 waiting · 1 done")
 })
 
 // ---- Task 4: sorting, grouping, hook status
 
-test("sortSessions: attention first, then waiting/done/working/idle, then newest", () => {
+test("sortSessions: attention first, then waiting/done/working, then newest", () => {
   const list = [
-    { key: "a", state: "idle", seen: true, stateSince: 50 },
     { key: "b", state: "working", seen: true, stateSince: 10 },
     { key: "c", state: "done", seen: false, stateSince: 20 },
     { key: "d", state: "waiting", seen: false, stateSince: 5 },
-    { key: "e", state: "done", seen: true, stateSince: 90 },   // displays as idle
+    { key: "e", state: "done", seen: true, stateSince: 90 },   // a seen done keeps its label, no attention
     { key: "f", state: "working", seen: true, stateSince: 40 },
     { key: "g", state: "waiting", seen: true, stateSince: 1 }   // seen waiting: no attention, still ranks as waiting
   ]
-  assert.deepEqual(Model.sortSessions(list, {}).map(s => s.key), ["d", "c", "g", "f", "b", "e", "a"])
-  assert.deepEqual(Model.sortSessions(list, { blinkOnDone: false }).map(s => s.key), ["d", "g", "c", "f", "b", "e", "a"])
-  assert.equal(list[0].key, "a", "input is not mutated")
+  assert.deepEqual(Model.sortSessions(list, {}).map(s => s.key), ["d", "c", "g", "e", "f", "b"])
+  assert.deepEqual(Model.sortSessions(list, { blinkOnDone: false }).map(s => s.key), ["d", "g", "e", "c", "f", "b"])
+  assert.equal(list[0].key, "b", "input is not mutated")
 })
 
 test("groupByWorkspace: groups by the live window's workspace, Other last, current flagged, sorted inside", () => {
   const list = [
-    { key: "a", state: "idle", seen: true, stateSince: 1, windowAddress: "w1" },
+    { key: "a", state: "working", seen: true, stateSince: 1, windowAddress: "w1" },
     { key: "b", state: "done", seen: false, stateSince: 2, windowAddress: "w1" },
     { key: "c", state: "working", seen: true, stateSince: 3, windowAddress: "w2" },
     { key: "d", state: "working", seen: true, stateSince: 4, windowAddress: "" },
-    { key: "e", state: "idle", seen: true, stateSince: 5, windowAddress: "gone" }
+    { key: "e", state: "working", seen: true, stateSince: 5, windowAddress: "gone" }
   ]
   const lookup = { w1: { workspaceId: 5, title: "x" }, w2: { workspaceId: 2, title: "y" } }
   const groups = Model.groupByWorkspace(list, lookup, 5, {})
   assert.deepEqual(groups.map(g => [g.id, g.label, g.current, g.sessions.map(s => s.key)]), [
     [2, "Workspace 2", false, ["c"]],
     [5, "Workspace 5", true, ["b", "a"]],
-    [Model.OTHER_GROUP_ID, "Other", false, ["d", "e"]]
+    [Model.OTHER_GROUP_ID, "Other", false, ["e", "d"]]
   ])
   assert.deepEqual(Model.groupByWorkspace([], lookup, 1, {}), [])
   assert.equal(Model.groupByWorkspace(list.slice(0, 1), null, 1, {})[0].label, "Other")

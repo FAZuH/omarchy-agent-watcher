@@ -503,8 +503,18 @@ Panel {
                   id: rowMouse
                   anchors.fill: parent
                   hoverEnabled: true
+                  acceptedButtons: Qt.LeftButton | Qt.RightButton
                   cursorShape: row.focusable ? Qt.PointingHandCursor : Qt.ArrowCursor
-                  onClicked: if (row.focusable) root.focusRow(row.modelData)
+                  onClicked: function(mouse) {
+                    if (mouse.button === Qt.RightButton) {
+                      // Right-click dismisses a finished session; anything
+                      // still working or waiting for you stays listed.
+                      if (row.modelData.state === "done" && root.host)
+                        root.host.dismissSession(row.modelData)
+                    } else if (row.focusable) {
+                      root.focusRow(row.modelData)
+                    }
+                  }
                 }
               }
             }

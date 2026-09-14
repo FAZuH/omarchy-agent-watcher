@@ -71,13 +71,16 @@ function sessionKey(agent, sessionId) {
 
 // One state file as written by bin/agent-watcher-hook -> a session record,
 // or null when the object is not usable. `seen` / `stateSince` are shell-side
-// only and get filled in by mergeSessions.
+// only and get filled in by mergeSessions. Idle sessions are never listed:
+// a row means activity (working, waiting for you, or a finished turn), not an
+// open terminal waiting for input.
 function normalizeSession(raw) {
   if (!raw || typeof raw !== "object") return null
   var agent = trimString(raw.agent)
   var sessionId = trimString(raw.sessionId)
   var state = trimString(raw.state)
   if (agent === "" || sessionId === "" || STATES.indexOf(state) === -1) return null
+  if (state === "idle") return null
   return {
     key: sessionKey(agent, sessionId),
     agent: agent,
@@ -221,7 +224,7 @@ function copySession(s) {
 // Merge a fresh snapshot into the previous session map. `seen` and
 // `stateSince` are shell-side only, so they carry over from `prev` unless the
 // file shows a new event. A new done/waiting event whose window is the active
-// toplevel is born seen (the user was watching); working/idle never blink.
+// toplevel is born seen (the user was watching); working is never a blink.
 function mergeSessions(prevMap, snapshot, activeAddress, nowSec) {
   var prev = prevMap || {}
   var active = normalizeAddress(activeAddress)
@@ -235,7 +238,7 @@ function mergeSessions(prevMap, snapshot, activeAddress, nowSec) {
       next.stateSince = old.stateSince
     } else {
       var focused = s.windowAddress !== "" && s.windowAddress === active
-      next.seen = focused || s.state === "working" || s.state === "idle"
+      next.seen = focused || s.state === "working"
       next.stateSince = old && old.state === s.state ? old.stateSince : (s.updatedAt || nowSec || 0)
     }
     out[s.key] = next
@@ -266,8 +269,19 @@ function sessionList(map) {
   return out
 }
 
+// A dismissed or acknowledged row keeps its true state label: only ever
+// "working", "waiting" or "done" is shown, never a fake "idle".
 function displayState(session) {
-  return session.state === "done" && session.seen ? "idle" : session.state
+  return session.state
+}
+
+// The map without `key` (right-click dismiss of a done session). The state
+// file is deleted through the hook; this only drops it from the view until
+// the next dump confirms it.
+function removeSession(map, key) {
+  var out = {}
+  for (var k in (map || {})) if (k !== key) out[k] = map[k]
+  return out
 }
 
 function needsAttention(session, settings) {
@@ -431,6 +445,7 @@ if (typeof module !== "undefined") {
     markSeen: markSeen,
     sessionList: sessionList,
     displayState: displayState,
+    removeSession: removeSession,
     needsAttention: needsAttention,
     barSummary: barSummary,
     barParts: barParts,
