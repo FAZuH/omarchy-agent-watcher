@@ -28,6 +28,10 @@ Panel {
   readonly property var blinkSettings: host ? host.blinkSettings : ({})
   readonly property var sessionList: host ? host.sessionList : []
   readonly property var summary: host ? host.summary : Model.barSummary([], {})
+  readonly property bool hasDoneSession: {
+    for (var i = 0; i < root.sessionList.length; i++) if (root.sessionList[i].state === "done") return true
+    return false
+  }
 
   // Re-evaluated every second while open (elapsed times, workspace moves).
   property int nowSec: Math.floor(Date.now() / 1000)
@@ -334,6 +338,8 @@ Panel {
                 required property var modelData
                 readonly property bool attention: Model.needsAttention(modelData, root.blinkSettings)
                 readonly property bool focusable: modelData.windowAddress !== ""
+                readonly property bool dismissable: modelData.state === "done"
+                readonly property bool interactive: focusable || dismissable
                 readonly property string shownState: Model.displayState(modelData)
                 readonly property color tone: root.stateColor(modelData)
                 width: content.width
@@ -344,7 +350,7 @@ Panel {
                 Rectangle {
                   anchors.fill: parent
                   radius: Style.cornerRadius
-                  color: rowMouse.containsMouse && row.focusable
+                  color: rowMouse.containsMouse && row.interactive
                     ? Style.hoverFillFor(root.barForeground, root.accentColor)
                     : (row.attention ? Style.selectedFillFor(root.barForeground, root.accentColor) : root.alpha(root.barForeground, 0.05))
                   Behavior on color { ColorAnimation { duration: 120 } }
@@ -504,7 +510,7 @@ Panel {
                   anchors.fill: parent
                   hoverEnabled: true
                   acceptedButtons: Qt.LeftButton | Qt.RightButton
-                  cursorShape: row.focusable ? Qt.PointingHandCursor : Qt.ArrowCursor
+                  cursorShape: row.interactive ? Qt.PointingHandCursor : Qt.ArrowCursor
                   onClicked: function(mouse) {
                     if (mouse.button === Qt.RightButton) {
                       // Right-click dismisses a finished session; anything
@@ -519,6 +525,16 @@ Panel {
               }
             }
           }
+        }
+
+        Text {
+          visible: root.hasDoneSession
+          width: parent.width
+          horizontalAlignment: Text.AlignHCenter
+          text: "Right-click a finished session to remove it from the list."
+          color: root.dimForeground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
         }
 
         PanelSeparator { foreground: root.barForeground }
