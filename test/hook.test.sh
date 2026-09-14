@@ -341,6 +341,8 @@ assert_eq "$(jq -r '.hooks.AfterAgent[0].hooks[0].timeout' "$AGENT_WATCHER_GEMIN
 assert_eq "$(jq -r '.hooks.AfterAgent[0].hooks[0].command' "$AGENT_WATCHER_GEMINI_SETTINGS")" "$ROOT/bin/agent-watcher-hook gemini done" "gemini AfterAgent -> done"
 assert_eq "$("$SETUP" status gemini)" "gemini installed" "gemini status"
 
+# This machine may run opencode v2; the classic plugin below is v1-only.
+export AGENT_WATCHER_OPENCODE_VERSION=1
 "$SETUP" install opencode >/dev/null; rc=$?
 assert_eq "$rc" 0 "opencode install"
 assert_file "$AGENT_WATCHER_OPENCODE_PLUGIN" "opencode plugin file created"
@@ -353,6 +355,38 @@ assert_file "$AGENT_WATCHER_OPENCODE_PLUGIN.agent-watcher.bak" "re-installing th
 "$SETUP" remove opencode >/dev/null
 assert_nofile "$AGENT_WATCHER_OPENCODE_PLUGIN" "opencode remove deletes the plugin"
 assert_file "$AGENT_WATCHER_OPENCODE_PLUGIN.agent-watcher.bak" "opencode remove leaves a backup"
+unset AGENT_WATCHER_OPENCODE_VERSION
+
+echo "== setup: opencode v2 (directory TUI plugin)"
+export AGENT_WATCHER_OPENCODE_VERSION=2
+export AGENT_WATCHER_OPENCODE2_DIR="$TMP/cfg/opencode/plugins/agent-watcher"
+"$SETUP" install opencode >/dev/null; rc=$?
+assert_eq "$rc" 0 "v2 install exits 0"
+assert_file "$AGENT_WATCHER_OPENCODE2_DIR/src/tui.js" "v2 plugin file created"
+grep -q "\"$ROOT/bin/agent-watcher-hook\"" "$AGENT_WATCHER_OPENCODE2_DIR/src/tui.js" && ok || ko "v2 plugin has the hook path substituted"
+grep -q "__HOOK_PATH__" "$AGENT_WATCHER_OPENCODE2_DIR/src/tui.js" && ko "placeholder left in v2 plugin" || ok
+node --input-type=module -e "import('file://$AGENT_WATCHER_OPENCODE2_DIR/tui.js').then(m => { if (!m.default || typeof m.default.setup !== 'function') process.exit(1) }, () => process.exit(1))" && ok || ko "v2 tui entry is importable ESM default-exporting {setup}"
+assert_file "$AGENT_WATCHER_OPENCODE2_DIR/src/index.js" "v2 server stub created"
+assert_file "$AGENT_WATCHER_OPENCODE2_DIR/package.json" "v2 package.json created"
+assert_eq "$("$SETUP" status opencode)" "opencode installed" "v2 status after install"
+"$SETUP" install opencode >/dev/null
+assert_file "$AGENT_WATCHER_OPENCODE2_DIR/src/tui.js.agent-watcher.bak" "re-installing v2 backs up the previous plugin"
+printf 'const HOOK = "%s/bin/agent-watcher-hook"\n' "$ROOT" > "$AGENT_WATCHER_OPENCODE_PLUGIN"
+"$SETUP" install opencode >/dev/null
+assert_nofile "$AGENT_WATCHER_OPENCODE_PLUGIN" "v2 install removes a v1 plugin leftover"
+assert_file "$AGENT_WATCHER_OPENCODE_PLUGIN.agent-watcher.bak" "the v1 leftover is backed up before removal"
+mkdir -p "$TMP/cfg/opencode/plugins/foreign"
+printf '{"name":"x"}\n' > "$TMP/cfg/opencode/plugins/foreign/package.json"
+err=$(AGENT_WATCHER_OPENCODE2_DIR="$TMP/cfg/opencode/plugins/foreign" "$SETUP" install opencode 2>&1 >/dev/null); rc=$?
+assert_eq "$rc" 1 "v2 install refuses a foreign plugin directory"
+case "$err" in *refusing*) ok ;; *) ko "refusal reason on stderr (got '$err')" ;; esac
+assert_eq "$(cat "$TMP/cfg/opencode/plugins/foreign/package.json")" '{"name":"x"}' "foreign directory untouched"
+"$SETUP" remove opencode >/dev/null; rc=$?
+assert_eq "$rc" 0 "v2 remove exits 0"
+assert_nofile "$AGENT_WATCHER_OPENCODE2_DIR/package.json" "v2 remove deletes the directory"
+assert_file "$AGENT_WATCHER_OPENCODE2_DIR.agent-watcher.bak" "v2 remove leaves a backup beside the directory"
+assert_eq "$("$SETUP" status opencode)" "opencode not-installed" "v2 status after remove"
+unset AGENT_WATCHER_OPENCODE_VERSION AGENT_WATCHER_OPENCODE2_DIR
 
 echo "== setup: status all / agent-missing / usage"
 assert_eq "$("$SETUP" status all | wc -l)" 4 "status all prints four lines"

@@ -23,12 +23,13 @@ you use. That adds a few hook entries to the agent's own config:
 | Claude Code | `~/.claude/settings.json` → `hooks` (SessionStart, UserPromptSubmit, PermissionRequest, Notification, PostToolUse, Stop, SessionEnd) | |
 | Codex | `~/.codex/hooks.json` | run `/hooks` inside Codex once to trust them |
 | Gemini CLI | `~/.gemini/settings.json` → `hooks` | |
-| OpenCode | `~/.config/opencode/plugins/agent-watcher.js` | |
+| OpenCode | v1: `~/.config/opencode/plugins/agent-watcher.js` · v2: `~/.config/opencode/plugins/agent-watcher/` (TUI plugin) | |
 
 Claude Code picks the hooks up live in most cases; if a session doesn't show
-up, restart it. Codex, Gemini CLI and OpenCode load hooks at startup. Headless
-`codex exec` runs need `--dangerously-bypass-hook-trust` to fire hooks that
-haven't been trusted yet.
+up, restart it. Codex, Gemini CLI and OpenCode load hooks at startup, and on
+OpenCode v2 every already-open TUI must be restarted once after installing.
+Headless `codex exec` runs need `--dangerously-bypass-hook-trust` to fire
+hooks that haven't been trusted yet.
 
 A backup `<file>.agent-watcher.bak` is written before every change, only
 entries pointing at `agent-watcher-hook` are ever added or removed, and
@@ -104,11 +105,16 @@ a window — click-to-focus works on both generations.
   Claude Code's own background plumbing (the `claude daemon` and the
   `bg-pty-host` sessions it pre-spawns) are intentionally not listed — only
   the sessions you opened are.
+- On OpenCode v2 a session runs in the shared background service while the TUI
+  is only a client, so the plugin reports the session each TUI window is
+  currently showing: switch sessions in a window and the bar row follows, and
+  headless `opencode run` sessions (no TUI, no window to focus) are not
+  watched at all.
 
 ## Develop
 
 ```sh
-node --test test/model.test.js
+node --test test/model.test.js test/tui-plugin.test.mjs
 bash test/hook.test.sh
 omarchy plugin validate .
 ```

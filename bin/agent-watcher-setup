@@ -10,17 +10,26 @@
 # Only entries whose command contains "agent-watcher-hook" are ever added or
 # removed; everything else in the agent's config is left alone. A backup
 # <file>.agent-watcher.bak is written before each modification.
+#
+# opencode installs depend on the binary's major version: v1 gets the classic
+# plugin file in ~/.config/opencode/plugins/, v2 gets a directory plugin in
+# ~/.config/opencode/plugins/agent-watcher/ whose ./tui entry opencode loads
+# into every TUI client. AGENT_WATCHER_OPENCODE_VERSION pins the major.
 set -u
 
 HERE=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
 HOOK="$HERE/agent-watcher-hook"
 TEMPLATE="$(dirname "$HERE")/hooks/opencode-agent-watcher.js"
+TEMPLATE_V2="$(dirname "$HERE")/hooks/opencode-agent-watcher-tui.mjs"
 MARK="agent-watcher-hook"
 
 CLAUDE_SETTINGS="${AGENT_WATCHER_CLAUDE_SETTINGS:-$HOME/.claude/settings.json}"
 CODEX_HOOKS="${AGENT_WATCHER_CODEX_HOOKS:-$HOME/.codex/hooks.json}"
 GEMINI_SETTINGS="${AGENT_WATCHER_GEMINI_SETTINGS:-$HOME/.gemini/settings.json}"
 OPENCODE_PLUGIN="${AGENT_WATCHER_OPENCODE_PLUGIN:-$HOME/.config/opencode/plugins/agent-watcher.js}"
+# v2: a directory plugin; opencode auto-discovers <dir>/tui next to the
+# classic plugins/ scan, no tui.jsonc edit involved.
+OPENCODE2_DIR="${AGENT_WATCHER_OPENCODE2_DIR:-$HOME/.config/opencode/plugins/agent-watcher}"
 
 die() { echo "error: $*" >&2; exit 1; }
 usage() { echo "usage: agent-watcher-setup status <agent|all> | install <agent> | remove <agent>" >&2; exit 2; }
@@ -124,6 +133,30 @@ has_hooks() { # has_hooks <file>
   [ -f "$1" ] && jq -e --arg mark "$MARK" '[(.hooks // {})[][]?.hooks[]?.command // ""] | any(contains($mark))' "$1" >/dev/null 2>&1
 }
 
+# Major version of the opencode binary (1 = classic plugins dir, 2 = v2 TUI
+# plugin). AGENT_WATCHER_OPENCODE_VERSION pins it (tests, mixed setups).
+opencode_major() {
+  if [ -n "${AGENT_WATCHER_OPENCODE_VERSION:-}" ]; then
+    printf '%s' "$AGENT_WATCHER_OPENCODE_VERSION"
+    return 0
+  fi
+  command -v opencode >/dev/null 2>&1 || return 1
+  local ver
+  ver=$(opencode --version 2>/dev/null | head -n1) || return 1
+  ver=${ver##* }; ver=${ver#v}; ver=${ver%%.*}
+  case "$ver" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s' "$ver"
+}
+
+is_v2() { local major; major=$(opencode_major 2>/dev/null) || return 1; [ "${major:-0}" -ge 2 ]; }
+
+# True when the v2 plugin directory holds our files (never trust a foreign
+# directory that merely shares the name).
+opencode2_installed() {
+  [ -f "$OPENCODE2_DIR/src/tui.js" ] && grep -q "$MARK" "$OPENCODE2_DIR/src/tui.js" 2>/dev/null
+}
+
+
 agent_present() { # binary on PATH or its config dir exists
   local file
   file=$(config_file "$1") || return 1
@@ -137,7 +170,12 @@ status_of() {
   local agent="$1" installed=1
   case "$agent" in
     claude|codex|gemini) has_hooks "$(config_file "$agent")" && installed=0 ;;
-    opencode) [ -f "$OPENCODE_PLUGIN" ] && grep -q "$MARK" "$OPENCODE_PLUGIN" 2>/dev/null && installed=0 ;;
+    opencode)
+      if is_v2; then
+        opencode2_installed && installed=0
+      else
+        [ -f "$OPENCODE_PLUGIN" ] && grep -q "$MARK" "$OPENCODE_PLUGIN" 2>/dev/null && installed=0
+      fi ;;
     *) return 1 ;;
   esac
   if [ "$installed" = 0 ]; then printf 'installed'
@@ -150,10 +188,38 @@ install_agent() {
   case "$1" in
     claude|codex|gemini) merge_hooks "$(config_file "$1")" "$(hook_groups "$1")" || die "could not update $(config_file "$1")" ;;
     opencode)
-      [ -f "$TEMPLATE" ] || die "missing template $TEMPLATE"
-      mkdir -p "$(dirname "$OPENCODE_PLUGIN")" || die "cannot create $(dirname "$OPENCODE_PLUGIN")"
-      backup "$OPENCODE_PLUGIN"
-      sed "s|__HOOK_PATH__|$HOOK|g" "$TEMPLATE" > "$OPENCODE_PLUGIN" || die "could not write $OPENCODE_PLUGIN" ;;
+      if is_v2; then
+        [ -f "$TEMPLATE_V2" ] || die "missing template $TEMPLATE_V2"
+        if [ -d "$OPENCODE2_DIR" ] && ! opencode2_installed && [ -n "$(ls -A "$OPENCODE2_DIR" 2>/dev/null)" ]; then
+          die "$OPENCODE2_DIR holds files that are not ours; refusing to overwrite"
+        fi
+        mkdir -p "$OPENCODE2_DIR/src" || die "cannot create $OPENCODE2_DIR"
+        backup "$OPENCODE2_DIR/src/tui.js"
+        sed "s|__HOOK_PATH__|$HOOK|g" "$TEMPLATE_V2" > "$OPENCODE2_DIR/src/tui.js" || die "could not write $OPENCODE2_DIR/src/tui.js"
+        printf 'export default { id: "agent-watcher", tui: true, setup: async () => {} }\n' > "$OPENCODE2_DIR/src/index.js"
+        printf 'export * from "./src/index.js"\nexport { default } from "./src/index.js"\n' > "$OPENCODE2_DIR/index.js"
+        printf 'export * from "./src/tui.js"\nexport { default } from "./src/tui.js"\n' > "$OPENCODE2_DIR/tui.js"
+        cat > "$OPENCODE2_DIR/package.json" <<'PKG'
+{
+  "name": "agent-watcher",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.js",
+    "./tui": "./src/tui.js"
+  }
+}
+PKG
+        # A v1 plugin file left behind would be refused by v2 on every start.
+        if [ -f "$OPENCODE_PLUGIN" ] && grep -q "$MARK" "$OPENCODE_PLUGIN" 2>/dev/null; then
+          backup "$OPENCODE_PLUGIN"; rm -f "$OPENCODE_PLUGIN"
+        fi
+      else
+        [ -f "$TEMPLATE" ] || die "missing template $TEMPLATE"
+        mkdir -p "$(dirname "$OPENCODE_PLUGIN")" || die "cannot create $(dirname "$OPENCODE_PLUGIN")"
+        backup "$OPENCODE_PLUGIN"
+        sed "s|__HOOK_PATH__|$HOOK|g" "$TEMPLATE" > "$OPENCODE_PLUGIN" || die "could not write $OPENCODE_PLUGIN"
+      fi ;;
     *) usage ;;
   esac
   [ "$1" = codex ] && echo "note: run /hooks inside Codex once to trust the new hooks"
@@ -163,7 +229,16 @@ install_agent() {
 remove_agent() {
   case "$1" in
     claude|codex|gemini) remove_hooks "$(config_file "$1")" || die "could not update $(config_file "$1")" ;;
-    opencode) backup "$OPENCODE_PLUGIN"; rm -f "$OPENCODE_PLUGIN" ;;
+    opencode)
+      if is_v2; then
+        [ -d "$OPENCODE2_DIR" ] || return 0
+        opencode2_installed || die "$OPENCODE2_DIR is not our plugin directory; refusing to remove it"
+        # The dir goes away entirely, so the backup must live beside it.
+        cp -f "$OPENCODE2_DIR/src/tui.js" "$OPENCODE2_DIR.agent-watcher.bak"
+        rm -rf "$OPENCODE2_DIR"
+      else
+        backup "$OPENCODE_PLUGIN"; rm -f "$OPENCODE_PLUGIN"
+      fi ;;
     *) usage ;;
   esac
 }
