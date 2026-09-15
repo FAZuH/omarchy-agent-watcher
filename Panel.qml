@@ -144,6 +144,13 @@ Panel {
     root.close()
   }
 
+  function clearAllDone() {
+    if (!root.host) return
+    var list = root.sessionList
+    for (var i = 0; i < list.length; i++)
+      if (list[i].state === "done") root.host.dismissSession(list[i])
+  }
+
   function refreshHookStatus() {
     if (!root.host || statusProc.running) return
     statusProc.command = [root.host.setupScript, "status", "all"]
@@ -338,8 +345,6 @@ Panel {
                 required property var modelData
                 readonly property bool attention: Model.needsAttention(modelData, root.blinkSettings)
                 readonly property bool focusable: modelData.windowAddress !== ""
-                readonly property bool dismissable: modelData.state === "done"
-                readonly property bool interactive: focusable || dismissable
                 readonly property string shownState: Model.displayState(modelData)
                 readonly property color tone: root.stateColor(modelData)
                 width: content.width
@@ -350,7 +355,7 @@ Panel {
                 Rectangle {
                   anchors.fill: parent
                   radius: Style.cornerRadius
-                  color: rowMouse.containsMouse && row.interactive
+                  color: rowMouse.containsMouse
                     ? Style.hoverFillFor(root.barForeground, root.accentColor)
                     : (row.attention ? Style.selectedFillFor(root.barForeground, root.accentColor) : root.alpha(root.barForeground, 0.05))
                   Behavior on color { ColorAnimation { duration: 120 } }
@@ -510,7 +515,7 @@ Panel {
                   anchors.fill: parent
                   hoverEnabled: true
                   acceptedButtons: Qt.LeftButton | Qt.RightButton
-                  cursorShape: row.interactive ? Qt.PointingHandCursor : Qt.ArrowCursor
+                  cursorShape: Qt.PointingHandCursor
                   onClicked: function(mouse) {
                     if (mouse.button === Qt.RightButton) {
                       // Right-click dismisses a finished session; anything
@@ -519,6 +524,9 @@ Panel {
                         root.host.dismissSession(row.modelData)
                     } else if (row.focusable) {
                       root.focusRow(row.modelData)
+                    } else if (root.host) {
+                      // No window here: open the session in a floating terminal.
+                      root.host.openSession(row.modelData)
                     }
                   }
                 }
@@ -527,14 +535,42 @@ Panel {
           }
         }
 
-        Text {
+        Item {
           visible: root.hasDoneSession
-          width: parent.width
-          horizontalAlignment: Text.AlignHCenter
-          text: "Right-click a finished session to remove it from the list."
-          color: root.dimForeground
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
+          width: content.width
+          implicitHeight: dismissHint.implicitHeight
+          height: implicitHeight
+
+          Text {
+            id: dismissHint
+            anchors.left: parent.left
+            anchors.right: clearDone.left
+            anchors.rightMargin: Style.space(8)
+            text: "Right-click a finished session to remove it from the list."
+            color: root.dimForeground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            verticalAlignment: Text.AlignVCenter
+          }
+
+          // Bulk dismiss: same per-row removal, queued like right-clicks.
+          Text {
+            id: clearDone
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Clear all done"
+            color: clearDoneMouse.containsMouse ? root.accentColor : root.dimForeground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            Behavior on color { ColorAnimation { duration: 120 } }
+            MouseArea {
+              id: clearDoneMouse
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.clearAllDone()
+            }
+          }
         }
 
         PanelSeparator { foreground: root.barForeground }
@@ -691,7 +727,7 @@ Panel {
           leftPadding: Style.space(2)
           rightPadding: Style.space(2)
           wrapMode: Text.WordWrap
-          text: "Click a session to focus its window · Middle-click the pill to refresh · Remove hooks here before uninstalling the plugin"
+          text: "Click a session to focus or open it · Middle-click the pill to refresh · Remove hooks here before uninstalling the plugin"
           color: root.dimForeground
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption

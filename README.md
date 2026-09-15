@@ -52,8 +52,9 @@ plugin directory and would otherwise fail on every agent turn.
 |-------|--------|--------|
 | pill | left click | open / close the panel (Esc closes, Tab switches panels, Enter refreshes) |
 | pill | middle click | refresh now |
-| panel | click a session | focus its window (switches workspace) |
+| panel | click a session | focus its window (switches workspace); with no window, open it in a floating terminal — OpenCode resumes that exact session, other agents get a shell in its directory |
 | panel | right click a **done** session | dismiss it from the list (a finished scheduled run, say); if it works again a fresh row appears |
+| panel | **Clear all done** | dismiss every done session at once (shown under the list while any done row exists) |
 | panel | **Hooks** header | expand / collapse the per-agent switches (opens by itself while nothing is installed) |
 | panel | agent switch | install / remove that agent's hooks |
 
@@ -100,7 +101,8 @@ a window — click-to-focus works on both generations.
 - A shell restart resets the "seen" memory, so unacknowledged sessions blink
   again even if you'd already looked at them.
 - Sessions without a Hyprland window (tmux/screen, SSH) appear under
-  **Other**, without click-to-focus. An agent that outlives its closed
+  **Other**; clicking one opens a floating terminal instead of focusing.
+  An agent that outlives its closed
   terminal (OpenCode ignores the hangup) is dropped from the list within a
   second — the process itself keeps running until you kill it.
 - Sub-agent sessions (Claude Code subagents, OpenCode child sessions) and

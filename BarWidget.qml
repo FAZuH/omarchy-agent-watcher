@@ -97,6 +97,22 @@ BarWidget {
     dismissProc.running = true
   }
 
+  // Left-click of a session with no window here: open it in Omarchy's
+  // floating terminal (the app-id/title the compositor's float rule matches).
+  // OpenCode resumes the exact session; other agents get a shell in the
+  // session's directory. Positional "$0"/"$1" keep cwd and id quoting-safe.
+  function openSession(session) {
+    if (!session) return
+    var script = session.agent === "opencode"
+      ? 'cd -- "$0" 2>/dev/null; exec opencode -s "$1"'
+      : 'cd -- "$0" 2>/dev/null; exec bash'
+    if (openProc.running) openProc.stop()
+    openProc.command = ["setsid", "uwsm-app", "--", "xdg-terminal-exec",
+      "--app-id=org.omarchy.terminal", "--title=Omarchy",
+      "-e", "bash", "-c", script, session.cwd || "", session.sessionId || ""]
+    openProc.running = true
+  }
+
   function focusSession(session) {
     if (!session || session.windowAddress === "") return
     var target = "address:0x" + session.windowAddress
@@ -213,6 +229,11 @@ BarWidget {
     id: dismissProc
     running: false
     onExited: root.pumpDismiss()
+  }
+
+  Process {
+    id: openProc
+    running: false
   }
 
   // Liveness: prune dead agents even when no hook ever fires again.
