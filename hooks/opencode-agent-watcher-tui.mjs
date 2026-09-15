@@ -66,9 +66,10 @@ function send(event, sessionId, cwd, title, windowless) {
 }
 
 const store = (ctx) => ctx?.data?.session ?? ctx?.state?.session
-// permission/form/pending are `list(sid)` maps at runtime (form holds
-// question-tool prompts: the session waits on the user's answer) but plain
-// functions in the documented API.
+// permission/form are `list(sid)` maps at runtime (form holds question-tool
+// prompts: the session waits on the user's answer) but plain functions in the
+// documented API. `pending` is deliberately NOT a blocker: it holds input the
+// user queued while the agent was busy, which does not wait on the user.
 function pending(storeObj, key, sessionId) {
   const v = storeObj?.[key]
   try {
@@ -78,7 +79,7 @@ function pending(storeObj, key, sessionId) {
   }
 }
 
-const BLOCKERS = ["permission", "pending", "form"]
+const BLOCKERS = ["permission", "form"]
 
 // The tracked slice of one session. state: working | waiting | done -- waiting
 // means a permission, question, or other user-input request is pending, on

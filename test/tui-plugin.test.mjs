@@ -41,8 +41,9 @@ test("snapshot: status maps to the watcher states; permissions and pending win",
   assert.equal(snapshot(fakeApi(sess(), { status: "idle" }), "s1").state, "done")
   assert.equal(snapshot(fakeApi(sess(), { status: undefined }), "s1").state, "done")
   assert.equal(snapshot(fakeApi(sess(), { status: "running", permissions: [{ id: "p" }] }), "s1").state, "waiting")
-  assert.equal(snapshot(fakeApi(sess(), { status: "running", pending: [{ id: "q" }] }), "s1").state, "waiting")
   assert.equal(snapshot(fakeApi(sess(), { status: "running", forms: [{ id: "frm" }] }), "s1").state, "waiting")
+  // Queued input is not the agent waiting on the user.
+  assert.equal(snapshot(fakeApi(sess(), { status: "running", pending: [{ id: "q" }] }), "s1").state, "working")
 })
 
 test("snapshot: multiline and padded titles collapse to one line", () => {
@@ -72,12 +73,15 @@ test("snapshot: a pending permission or question on a subagent child makes the p
         get: (id) => (id === "s1" ? sess() : id === "c1" ? { id: "c1", parentID: "s1" } : undefined),
         status: () => "running",
         permission: { list: (id) => (id === "c1" && key === "permission" ? [{ id: "p" }] : []) },
+        form: { list: (id) => (id === "c1" && key === "form" ? [{ id: "frm" }] : []) },
         pending: { list: (id) => (id === "c1" && key === "pending" ? [{ id: "q" }] : []) },
       },
     },
   })
   assert.equal(snapshot(childCtx("permission"), "s1", ["c1"]).state, "waiting")
-  assert.equal(snapshot(childCtx("pending"), "s1", ["c1"]).state, "waiting")
+  assert.equal(snapshot(childCtx("form"), "s1", ["c1"]).state, "waiting")
+  // A child's queued input does not block the parent either.
+  assert.equal(snapshot(childCtx("pending"), "s1", ["c1"]).state, "working")
   assert.equal(snapshot(childCtx("permission"), "s1").state, "working")
   assert.equal(snapshot(childCtx("permission"), "s1", []).state, "working")
 })
