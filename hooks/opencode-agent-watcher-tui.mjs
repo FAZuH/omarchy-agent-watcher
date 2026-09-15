@@ -66,8 +66,9 @@ function send(event, sessionId, cwd, title, windowless) {
 }
 
 const store = (ctx) => ctx?.data?.session ?? ctx?.state?.session
-// permission/pending are `list(sid)` maps at runtime but plain functions in
-// the documented API.
+// permission/form/pending are `list(sid)` maps at runtime (form holds
+// question-tool prompts: the session waits on the user's answer) but plain
+// functions in the documented API.
 function pending(storeObj, key, sessionId) {
   const v = storeObj?.[key]
   try {
@@ -77,18 +78,21 @@ function pending(storeObj, key, sessionId) {
   }
 }
 
+const BLOCKERS = ["permission", "pending", "form"]
+
 // The tracked slice of one session. state: working | waiting | done -- waiting
-// means a permission or question is pending, on this session or on any of its
-// subagent children (a blocked child stalls the parent's turn, so the parent
-// row must show attention); anything but idle (running, retry, ...) counts as
-// working because the turn is still going. Returns null for anything this
-// window should not track (child sessions, unknown ids).
+// means a permission, question, or other user-input request is pending, on
+// this session or on any of its subagent children (a blocked child stalls the
+// parent's turn, so the parent row must show attention); anything but idle
+// (running, retry, ...) counts as working because the turn is still going.
+// Returns null for anything this window should not track (child sessions,
+// unknown ids).
 export function snapshot(ctx, sessionId, childIds) {
   const ds = store(ctx)
   if (!ds) return null
   const s = ds.get?.(sessionId)
   if (!s || s.parentID) return null
-  const blocked = (id) => pending(ds, "permission", id).length > 0 || pending(ds, "pending", id).length > 0
+  const blocked = (id) => BLOCKERS.some((k) => pending(ds, k, id).length > 0)
   const waiting = blocked(sessionId) || (childIds || []).some(blocked)
   let status
   try {

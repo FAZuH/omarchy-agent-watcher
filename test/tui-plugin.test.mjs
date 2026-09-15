@@ -16,6 +16,7 @@ function fakeApi(session, extra = {}) {
         status: () => extra.status,
         permission: { list: () => extra.permissions || [] },
         pending: { list: () => extra.pending || [] },
+        form: { list: () => extra.forms || [] },
       },
     },
   }
@@ -41,6 +42,7 @@ test("snapshot: status maps to the watcher states; permissions and pending win",
   assert.equal(snapshot(fakeApi(sess(), { status: undefined }), "s1").state, "done")
   assert.equal(snapshot(fakeApi(sess(), { status: "running", permissions: [{ id: "p" }] }), "s1").state, "waiting")
   assert.equal(snapshot(fakeApi(sess(), { status: "running", pending: [{ id: "q" }] }), "s1").state, "waiting")
+  assert.equal(snapshot(fakeApi(sess(), { status: "running", forms: [{ id: "frm" }] }), "s1").state, "waiting")
 })
 
 test("snapshot: multiline and padded titles collapse to one line", () => {
